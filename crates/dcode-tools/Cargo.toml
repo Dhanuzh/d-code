@@ -1,0 +1,18 @@
+[package]
+name    = "dcode-tools"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+tokio.workspace      = true
+futures.workspace    = true
+serde.workspace      = true
+serde_json.workspace = true
+anyhow.workspace     = true
+thiserror.workspace  = true
+dcode-providers = { path = "../dcode-providers" }
+
+walkdir = "2"
+glob    = "0.3"
+regex   = "1"
+similar = { version = "2", features = ["text"] }

@@ -1,0 +1,25 @@
+[package]
+name    = "d-code"
+version.workspace = true
+edition.workspace = true
+
+[[bin]]
+name = "d-code"
+path = "src/main.rs"
+
+[dependencies]
+tokio.workspace       = true
+futures.workspace     = true
+serde.workspace       = true
+serde_json.workspace  = true
+anyhow.workspace      = true
+thiserror.workspace   = true
+chrono.workspace      = true
+dirs.workspace        = true
+dcode-providers = { path = "../dcode-providers" }
+dcode-tools     = { path = "../dcode-tools" }
+dcode-agent     = { path = "../dcode-agent" }
+
+clap      = { version = "4", features = ["derive", "color"] }
+rustyline = "14"
+crossterm = "0.28"

@@ -1,0 +1,49 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/dcode-providers",
+    "crates/dcode-tools",
+    "crates/dcode-agent",
+    "crates/dcode-cli",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.80"
+
+[workspace.dependencies]
+# Async runtime
+tokio = { version = "1", features = ["full"] }
+futures = "0.3"
+async-trait = "0.1"
+
+# HTTP client (no OpenSSL — pure rustls)
+reqwest = { version = "0.12", default-features = false, features = [
+    "json", "stream", "rustls-tls", "gzip", "deflate",
+] }
+
+# Serialization
+serde       = { version = "1", features = ["derive"] }
+serde_json  = "1"
+
+# Error handling
+anyhow   = "1"
+thiserror = "2"
+
+# OAuth / PKCE crypto
+sha2   = "0.10"
+base64 = "0.22"
+rand   = "0.8"
+
+# Utilities
+chrono  = { version = "0.4", features = ["serde"] }
+dirs    = "5"
+url     = "2"
+tokio-util = { version = "0.7", features = ["codec", "io"] }
+
+[profile.release]
+opt-level     = 3
+lto           = "thin"
+codegen-units = 1
+strip         = true

@@ -1,0 +1,17 @@
+[package]
+name    = "dcode-agent"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+tokio.workspace       = true
+futures.workspace     = true
+async-trait.workspace = true
+serde.workspace       = true
+serde_json.workspace  = true
+anyhow.workspace      = true
+thiserror.workspace   = true
+chrono.workspace      = true
+dcode-providers = { path = "../dcode-providers" }
+dcode-tools     = { path = "../dcode-tools" }
+async-stream = "0.3"
