@@ -11,7 +11,7 @@ use tokio::sync::RwLock;
 
 use crate::provider::Provider;
 use crate::types::{
-    AuthStore, ContentBlock, CopilotAuth, Message, Role, StreamEvent, StopReason, ToolDef,
+    AuthStore, ContentBlock, CopilotAuth, Message, Role, StopReason, StreamEvent, ToolDef,
 };
 
 // ── OAuth constants ────────────────────────────────────────────────────────────
@@ -33,7 +33,7 @@ const COPILOT_INTEGRATION: &str = "vscode-chat";
 const EDITOR_VERSION: &str = "vscode/1.90.0";
 const EDITOR_PLUGIN_VERSION: &str = "copilot-chat/0.22.4";
 
-pub const DEFAULT_MODEL: &str = "gpt-4o";
+pub const DEFAULT_MODEL: &str = "gpt-4o-mini";
 pub const SUPPORTED_MODELS: &[&str] = &[
     "gpt-4o",
     "gpt-4.1",
@@ -133,7 +133,9 @@ pub async fn poll_github_token(
         }
         match data.error.as_deref() {
             Some("authorization_pending") => {
-                if let Some(i) = data.interval { secs = i; }
+                if let Some(i) = data.interval {
+                    secs = i;
+                }
             }
             Some("slow_down") => secs += 5,
             Some(err) => bail!("GitHub auth error: {err}"),
@@ -250,12 +252,14 @@ impl CopilotProvider {
 
 // ── OpenAI-compatible message conversion ──────────────────────────────────────
 
+#[allow(dead_code)]
 #[derive(Serialize)]
 struct OAIMessage {
     role: &'static str,
     content: serde_json::Value,
 }
 
+#[allow(dead_code)]
 #[derive(Serialize)]
 struct OAITool {
     #[serde(rename = "type")]
@@ -263,11 +267,23 @@ struct OAITool {
     function: OAIFunction,
 }
 
+#[allow(dead_code)]
 #[derive(Serialize)]
 struct OAIFunction {
     name: String,
     description: String,
     parameters: serde_json::Value,
+}
+
+fn parse_data_image_uri(s: &str) -> Option<(&str, &str)> {
+    let rest = s.strip_prefix("data:")?;
+    let (mime, rest) = rest.split_once(';')?;
+    let data = rest.strip_prefix("base64,")?;
+    if matches!(mime, "image/jpeg" | "image/png" | "image/gif" | "image/webp") {
+        Some((mime, data))
+    } else {
+        None
+    }
 }
 
 fn messages_to_oai(messages: &[Message]) -> Vec<serde_json::Value> {
@@ -296,11 +312,23 @@ fn messages_to_oai(messages: &[Message]) -> Vec<serde_json::Value> {
                             }
                         }));
                     }
-                    ContentBlock::ToolResult { tool_use_id, content, .. } => {
+                    ContentBlock::ToolResult {
+                        tool_use_id,
+                        content,
+                        ..
+                    } => {
+                        let content_val = if let Some((mime, data)) = parse_data_image_uri(content) {
+                            serde_json::json!([{
+                                "type": "image_url",
+                                "image_url": { "url": format!("data:{mime};base64,{data}") }
+                            }])
+                        } else {
+                            serde_json::json!(content)
+                        };
                         out.push(serde_json::json!({
                             "role": "tool",
                             "tool_call_id": tool_use_id,
-                            "content": content,
+                            "content": content_val,
                         }));
                     }
                 }
@@ -348,6 +376,31 @@ impl Provider for CopilotProvider {
     }
     fn context_window(&self) -> u32 {
         CONTEXT_WINDOW
+    }
+
+    async fn list_models(&self) -> Vec<String> {
+        #[derive(serde::Deserialize)]
+        struct ModelObj { id: String }
+        #[derive(serde::Deserialize)]
+        struct ModelList { data: Vec<ModelObj> }
+
+        let token = match self.fresh_copilot_token().await {
+            Ok(t) => t,
+            Err(_) => return SUPPORTED_MODELS.iter().map(|s| s.to_string()).collect(),
+        };
+        let Ok(resp) = self.client
+            .get("https://api.githubcopilot.com/models")
+            .bearer_auth(&token)
+            .header("Copilot-Integration-Id", "vscode-chat")
+            .send().await else {
+                return SUPPORTED_MODELS.iter().map(|s| s.to_string()).collect();
+        };
+        let Ok(list) = resp.json::<ModelList>().await else {
+            return SUPPORTED_MODELS.iter().map(|s| s.to_string()).collect();
+        };
+        let mut ids: Vec<String> = list.data.into_iter().map(|m| m.id).collect();
+        ids.sort();
+        if ids.is_empty() { SUPPORTED_MODELS.iter().map(|s| s.to_string()).collect() } else { ids }
     }
 
     async fn chat_stream(

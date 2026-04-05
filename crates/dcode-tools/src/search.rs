@@ -5,8 +5,8 @@ use anyhow::Context;
 use regex::Regex;
 use walkdir::WalkDir;
 
-const MAX_MATCHES: usize = 50;
-const MAX_CONTEXT_LINES: usize = 2;
+const MAX_MATCHES: usize = 100;
+const MAX_CONTEXT_LINES: usize = 3;
 
 pub struct GrepArgs {
     pub pattern: String,
@@ -89,7 +89,10 @@ pub fn grep_files(args: GrepArgs) -> anyhow::Result<String> {
     }
 
     if results.is_empty() {
-        Ok(format!("No matches for '{}' in {}", args.pattern, args.path))
+        Ok(format!(
+            "No matches for '{}' in {}",
+            args.pattern, args.path
+        ))
     } else {
         Ok(results.join("\n---\n"))
     }
@@ -112,7 +115,7 @@ fn glob_matches(pattern: &str, name: &str) -> bool {
 
 // ── Directory tree ─────────────────────────────────────────────────────────────
 
-const MAX_TREE_ENTRIES: usize = 300;
+const MAX_TREE_ENTRIES: usize = 500;
 
 pub fn list_directory(path: &str, max_depth: Option<usize>) -> anyhow::Result<String> {
     let root = Path::new(path);

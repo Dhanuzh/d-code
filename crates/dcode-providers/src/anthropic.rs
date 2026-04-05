@@ -9,7 +9,7 @@ use serde::Deserialize;
 use crate::oauth::{generate_pkce, url_encode};
 use crate::provider::Provider;
 use crate::types::{
-    AuthStore, ContentBlock, Message, ProviderAuth, Role, StreamEvent, StopReason, ToolDef,
+    AuthStore, ContentBlock, Message, ProviderAuth, Role, StopReason, StreamEvent, ToolDef,
 };
 
 // ── OAuth constants ────────────────────────────────────────────────────────────
@@ -29,9 +29,12 @@ const API_VERSION: &str = "2023-06-01";
 pub const DEFAULT_MODEL: &str = "claude-sonnet-4-5";
 pub const SUPPORTED_MODELS: &[&str] = &[
     "claude-sonnet-4-5",
+    "claude-sonnet-4-6",
+    "claude-opus-4-5",
     "claude-opus-4-1",
     "claude-3-7-sonnet-latest",
     "claude-3-5-haiku-latest",
+    "claude-haiku-4-5-20251001",
 ];
 pub const CONTEXT_WINDOW: u32 = 200_000;
 
@@ -113,7 +116,10 @@ pub async fn exchange_code(raw_code: &str, verifier: &str) -> anyhow::Result<Str
 /// Save the token to auth store.
 pub fn save_token(token: &str) -> anyhow::Result<()> {
     let mut store = AuthStore::load().unwrap_or_default();
-    store.anthropic = Some(ProviderAuth { token: token.to_string(), expires_at: None });
+    store.anthropic = Some(ProviderAuth {
+        token: token.to_string(),
+        expires_at: None,
+    });
     store.save()
 }
 
@@ -132,9 +138,9 @@ impl AnthropicProvider {
 
     pub fn from_auth_with_model(model: impl Into<String>) -> anyhow::Result<Self> {
         let store = AuthStore::load()?;
-        let auth = store
-            .anthropic
-            .ok_or_else(|| anyhow::anyhow!("Not logged in to Anthropic. Run: d-code login anthropic"))?;
+        let auth = store.anthropic.ok_or_else(|| {
+            anyhow::anyhow!("Not logged in to Anthropic. Run: d-code login anthropic")
+        })?;
         Ok(Self::new(auth.token, model))
     }
 
@@ -154,6 +160,7 @@ impl AnthropicProvider {
 // ── Streaming SSE parser ───────────────────────────────────────────────────────
 
 /// Internal SSE event types from Anthropic.
+#[allow(dead_code)]
 #[derive(Deserialize, Debug)]
 #[serde(tag = "type", rename_all = "snake_case")]
 enum SseEvent {
@@ -187,6 +194,7 @@ struct MessageStartData {
     usage: Option<UsageData>,
 }
 
+#[allow(dead_code)]
 #[derive(Deserialize, Debug)]
 #[serde(tag = "type", rename_all = "snake_case")]
 enum ContentBlockStart {
@@ -214,37 +222,107 @@ struct UsageData {
 
 // ── Request / response types ──────────────────────────────────────────────────
 
-fn messages_to_api(messages: &[Message]) -> Vec<serde_json::Value> {
+/// Convert messages to API format. When `use_cache` is true, marks a cache
+/// checkpoint on the second-to-last user message for long conversations,
+/// saving up to 90% on those prefix tokens.
+fn messages_to_api_with_cache(messages: &[Message]) -> Vec<serde_json::Value> {
+    messages_to_api_with_cache_inner(messages, true)
+}
+
+fn messages_to_api_with_cache_inner(messages: &[Message], use_cache: bool) -> Vec<serde_json::Value> {
+    // Find the index of the penultimate assistant message for cache checkpoint.
+    // We cache everything up to (but not including) the last two messages so
+    // the stable "history" is cached and only new content is charged full price.
+    let cache_checkpoint_idx: Option<usize> = if use_cache && messages.len() >= 4 {
+        // Mark cache on the message at len-4 (second to last full turn)
+        Some(messages.len().saturating_sub(4))
+    } else {
+        None
+    };
+
     messages
         .iter()
-        .map(|m| {
+        .enumerate()
+        .map(|(idx, m)| {
             let role = match m.role {
                 Role::User => "user",
                 Role::Assistant => "assistant",
             };
+            let is_cache_point = cache_checkpoint_idx == Some(idx);
+            let n_blocks = m.content.len();
             let content: Vec<serde_json::Value> = m
                 .content
                 .iter()
-                .map(|b| match b {
-                    ContentBlock::Text { text } => {
-                        serde_json::json!({"type":"text","text":text})
-                    }
-                    ContentBlock::ToolUse { id, name, input } => {
-                        serde_json::json!({"type":"tool_use","id":id,"name":name,"input":input})
-                    }
-                    ContentBlock::ToolResult { tool_use_id, content, is_error } => {
-                        serde_json::json!({
-                            "type":"tool_result",
-                            "tool_use_id":tool_use_id,
-                            "content":content,
-                            "is_error":is_error,
-                        })
+                .enumerate()
+                .map(|(block_idx, b)| {
+                    let is_last_block = block_idx + 1 == n_blocks;
+                    let add_cache = is_cache_point && is_last_block;
+                    match b {
+                        ContentBlock::Text { text } => {
+                            if add_cache {
+                                serde_json::json!({"type":"text","text":text,"cache_control":{"type":"ephemeral"}})
+                            } else {
+                                serde_json::json!({"type":"text","text":text})
+                            }
+                        }
+                        ContentBlock::ToolUse { id, name, input } => {
+                            serde_json::json!({"type":"tool_use","id":id,"name":name,"input":input})
+                        }
+                        ContentBlock::ToolResult {
+                            tool_use_id,
+                            content,
+                            is_error,
+                        } => {
+                            // Detect inline images encoded as data URIs.
+                            let content_val = if let Some(img) = parse_data_image_uri(content) {
+                                serde_json::json!([{
+                                    "type": "image",
+                                    "source": {
+                                        "type": "base64",
+                                        "media_type": img.0,
+                                        "data": img.1,
+                                    }
+                                }])
+                            } else {
+                                serde_json::json!(content)
+                            };
+                            if add_cache {
+                                serde_json::json!({
+                                    "type":"tool_result",
+                                    "tool_use_id":tool_use_id,
+                                    "content":content_val,
+                                    "is_error":is_error,
+                                    "cache_control":{"type":"ephemeral"},
+                                })
+                            } else {
+                                serde_json::json!({
+                                    "type":"tool_result",
+                                    "tool_use_id":tool_use_id,
+                                    "content":content_val,
+                                    "is_error":is_error,
+                                })
+                            }
+                        }
                     }
                 })
                 .collect();
             serde_json::json!({"role": role, "content": content})
         })
         .collect()
+}
+
+/// Parse a `data:<mime>;base64,<data>` URI from a tool result.
+/// Returns `Some((mime_type, base64_data))` for supported image types.
+fn parse_data_image_uri(s: &str) -> Option<(&str, &str)> {
+    let rest = s.strip_prefix("data:")?;
+    let (mime, rest) = rest.split_once(';')?;
+    let data = rest.strip_prefix("base64,")?;
+    // Only pass through supported Anthropic image types.
+    if matches!(mime, "image/jpeg" | "image/png" | "image/gif" | "image/webp") {
+        Some((mime, data))
+    } else {
+        None
+    }
 }
 
 fn tools_to_api(tools: &[ToolDef]) -> Vec<serde_json::Value> {
@@ -272,6 +350,11 @@ impl Provider for AnthropicProvider {
         CONTEXT_WINDOW
     }
 
+    async fn list_models(&self) -> Vec<String> {
+        // Anthropic doesn't expose a public models-list endpoint; return static catalog.
+        SUPPORTED_MODELS.iter().map(|s| s.to_string()).collect()
+    }
+
     async fn chat_stream(
         &self,
         system: &str,
@@ -281,15 +364,27 @@ impl Provider for AnthropicProvider {
     ) -> anyhow::Result<Pin<Box<dyn Stream<Item = anyhow::Result<StreamEvent>> + Send>>> {
         let url = format!("{API_BASE}/v1/messages");
 
+        // System prompt with prompt caching — cached after first call, saving ~90% on hits.
+        let system_block = serde_json::json!([{
+            "type": "text",
+            "text": system,
+            "cache_control": {"type": "ephemeral"}
+        }]);
+
         let mut body = serde_json::json!({
             "model": self.model,
             "max_tokens": max_tokens,
             "stream": true,
-            "system": system,
-            "messages": messages_to_api(messages),
+            "system": system_block,
+            "messages": messages_to_api_with_cache(messages),
         });
         if !tools.is_empty() {
-            body["tools"] = serde_json::json!(tools_to_api(tools));
+            // Cache the entire tools block (last tool gets the breakpoint marker).
+            let mut tools_json = tools_to_api(tools);
+            if let Some(last) = tools_json.last_mut() {
+                last["cache_control"] = serde_json::json!({"type": "ephemeral"});
+            }
+            body["tools"] = serde_json::json!(tools_json);
         }
 
         let resp = self
@@ -297,6 +392,7 @@ impl Provider for AnthropicProvider {
             .post(&url)
             .header("x-api-key", &self.token)
             .header("anthropic-version", API_VERSION)
+            .header("anthropic-beta", "prompt-caching-2024-07-31")
             .header("content-type", "application/json")
             .header("User-Agent", USER_AGENT)
             .json(&body)

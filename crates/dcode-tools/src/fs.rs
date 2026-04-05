@@ -3,8 +3,8 @@ use std::path::{Path, PathBuf};
 
 use anyhow::{bail, Context};
 
-const MAX_READ_LINES: usize = 500;
-const MAX_WRITE_BYTES: usize = 1_024 * 1_024; // 1 MiB guard
+const MAX_READ_LINES: usize = 1_000;
+const MAX_WRITE_BYTES: usize = 2 * 1_024 * 1_024; // 2 MiB guard
 
 // ── Read file ──────────────────────────────────────────────────────────────────
 
@@ -18,8 +18,7 @@ pub struct ReadArgs {
 
 pub fn read_file(args: ReadArgs) -> anyhow::Result<String> {
     let path = PathBuf::from(&args.path);
-    let content = std::fs::read_to_string(&path)
-        .with_context(|| format!("read {}", args.path))?;
+    let content = std::fs::read_to_string(&path).with_context(|| format!("read {}", args.path))?;
 
     let lines: Vec<&str> = content.lines().collect();
     let total = lines.len();
@@ -67,8 +66,7 @@ pub fn write_file(path: &str, content: &str) -> anyhow::Result<String> {
     let p = Path::new(path);
     if let Some(parent) = p.parent() {
         if !parent.as_os_str().is_empty() {
-            std::fs::create_dir_all(parent)
-                .with_context(|| format!("create dirs for {path}"))?;
+            std::fs::create_dir_all(parent).with_context(|| format!("create dirs for {path}"))?;
         }
     }
     std::fs::write(p, content).with_context(|| format!("write {path}"))?;
@@ -84,8 +82,8 @@ pub struct EditArgs {
 }
 
 pub fn edit_file(args: EditArgs) -> anyhow::Result<String> {
-    let content = std::fs::read_to_string(&args.path)
-        .with_context(|| format!("read {}", args.path))?;
+    let content =
+        std::fs::read_to_string(&args.path).with_context(|| format!("read {}", args.path))?;
 
     // Count occurrences to catch ambiguous edits.
     let count = content.matches(&args.old_string).count();
@@ -102,8 +100,7 @@ pub fn edit_file(args: EditArgs) -> anyhow::Result<String> {
     }
 
     let new_content = content.replacen(&args.old_string, &args.new_string, 1);
-    std::fs::write(&args.path, &new_content)
-        .with_context(|| format!("write {}", args.path))?;
+    std::fs::write(&args.path, &new_content).with_context(|| format!("write {}", args.path))?;
 
     // Produce a short diff summary.
     let old_lines = args.old_string.lines().count();
@@ -130,10 +127,7 @@ pub fn list_files(pattern: &str) -> anyhow::Result<String> {
         return Ok(format!("No files matched: {pattern}"));
     }
 
-    let mut lines: Vec<String> = paths
-        .iter()
-        .map(|p| p.display().to_string())
-        .collect();
+    let mut lines: Vec<String> = paths.iter().map(|p| p.display().to_string()).collect();
     lines.sort();
 
     let truncated = if paths.len() == MAX_GLOB_RESULTS {

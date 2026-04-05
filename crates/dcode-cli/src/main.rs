@@ -1,7 +1,9 @@
 mod commands;
+mod input;
 mod login;
 mod render;
 mod repl;
+mod sessions;
 
 use std::path::PathBuf;
 
@@ -43,7 +45,7 @@ enum Command {
     Status,
 }
 
-#[tokio::main]
+#[tokio::main(flavor = "current_thread")]
 async fn main() -> anyhow::Result<()> {
     let cli = Cli::parse();
 
@@ -57,8 +59,8 @@ async fn main() -> anyhow::Result<()> {
             let p = provider.as_deref().unwrap_or("anthropic");
             match p {
                 "anthropic" | "claude" => login::login_anthropic().await?,
-                "copilot"  | "github" => login::login_copilot().await?,
-                "openai"   | "gpt"    => login::login_openai().await?,
+                "copilot" | "github" => login::login_copilot().await?,
+                "openai" | "gpt" => login::login_openai().await?,
                 other => {
                     render::print_error(&format!(
                         "Unknown provider '{other}'. Use: anthropic, copilot, openai"
@@ -71,7 +73,6 @@ async fn main() -> anyhow::Result<()> {
             login::logout(&provider)?;
         }
         Some(Command::Status) => {
-            println!("Provider login status:");
             login::show_status();
         }
 
@@ -100,24 +101,47 @@ async fn run_oneshot(
 
     let provider = load_provider(provider_name.as_deref())?;
     let mut agent = Agent::new(provider, cwd);
-    let mut in_code_block = false;
+    let mut md = render::MarkdownRenderer::new();
+    let mut xml_filter = render::XmlFilter::new();
 
     agent
         .run_turn(&prompt, |ev| match ev {
             AgentEvent::TextDelta(t) => {
-                render::render_delta(&t, &mut in_code_block);
+                let clean = xml_filter.push(&t);
+                if !clean.is_empty() {
+                    md.push(&clean);
+                }
             }
             AgentEvent::ToolStart { name } => {
+                md.flush();
                 render::print_tool_start(&name);
             }
-            AgentEvent::ToolDone { name, is_error, .. } => {
-                render::print_tool_done(&name, is_error);
+            AgentEvent::ToolDone {
+                name,
+                input,
+                is_error,
+                ..
+            } => {
+                render::print_tool_done(&name, &input, is_error);
             }
-            AgentEvent::TokenUsage { input, output } => {
-                // Print usage at end.
-                let _ = (input, output);
+            AgentEvent::TokenUsage { .. } => {}
+            AgentEvent::UserQuestion { question, choices } => {
+                render::prompt_user_question(&question, &choices);
+            }
+            AgentEvent::ConfirmBash { command } => {
+                render::confirm_dangerous_bash(&command);
+            }
+            AgentEvent::DoomLoop { tool } => {
+                render::print_error(&format!(
+                    "Doom loop: '{tool}' called 3× with same args. Stopping."
+                ));
             }
             AgentEvent::TurnDone => {
+                let leftover = xml_filter.flush();
+                if !leftover.is_empty() {
+                    md.push(&leftover);
+                }
+                md.flush();
                 println!();
             }
         })

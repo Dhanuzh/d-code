@@ -1,0 +1,36 @@
+{
+  "name": "d-code",
+  "version": "0.1.0",
+  "description": "Lightweight AI coding agent for your terminal — powered by Claude, GPT-4, and GitHub Copilot",
+  "keywords": [
+    "ai",
+    "coding",
+    "agent",
+    "cli",
+    "llm",
+    "anthropic",
+    "claude",
+    "openai",
+    "copilot",
+    "developer-tools"
+  ],
+  "homepage": "https://github.com/ddhanush1/d-code",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/ddhanush1/d-code"
+  },
+  "license": "MIT",
+  "bin": {
+    "d-code": "bin/d-code"
+  },
+  "scripts": {
+    "postinstall": "node install.js"
+  },
+  "files": [
+    "bin/",
+    "install.js"
+  ],
+  "engines": {
+    "node": ">=16"
+  }
+}

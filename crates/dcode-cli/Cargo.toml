@@ -21,5 +21,4 @@ dcode-tools     = { path = "../dcode-tools" }
 dcode-agent     = { path = "../dcode-agent" }
 
 clap      = { version = "4", features = ["derive", "color"] }
-rustyline = "14"
 crossterm = "0.28"

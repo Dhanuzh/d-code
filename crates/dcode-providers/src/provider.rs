@@ -12,6 +12,9 @@ pub trait Provider: Send + Sync {
     fn model(&self) -> &str;
     fn context_window(&self) -> u32;
 
+    /// Fetch available model IDs from the provider. Falls back to static list on error.
+    async fn list_models(&self) -> Vec<String>;
+
     /// Stream a chat completion response.
     async fn chat_stream(
         &self,

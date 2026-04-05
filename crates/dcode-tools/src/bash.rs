@@ -3,8 +3,8 @@ use std::time::Duration;
 
 use anyhow::Context;
 
-const DEFAULT_TIMEOUT_SECS: u64 = 30;
-const MAX_OUTPUT_BYTES: usize = 8_192; // 8 KiB per output stream
+const DEFAULT_TIMEOUT_SECS: u64 = 60;
+const MAX_OUTPUT_BYTES: usize = 32_768; // 32 KiB per output stream
 
 pub struct BashArgs {
     pub command: String,

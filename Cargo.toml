@@ -39,7 +39,8 @@ rand   = "0.8"
 # Utilities
 chrono  = { version = "0.4", features = ["serde"] }
 dirs    = "5"
-url     = "2"
+url          = "2"
+urlencoding  = "2"
 tokio-util = { version = "0.7", features = ["codec", "io"] }
 
 [profile.release]

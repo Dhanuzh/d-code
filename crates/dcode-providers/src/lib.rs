@@ -6,9 +6,7 @@ pub mod provider;
 pub mod types;
 
 pub use provider::{BoxProvider, Provider};
-pub use types::{
-    AuthStore, ContentBlock, Message, Role, StreamEvent, StopReason, ToolDef,
-};
+pub use types::{AuthStore, ContentBlock, Message, Role, StopReason, StreamEvent, ToolDef};
 
 #[derive(Debug, Clone)]
 pub struct ProviderModelCatalog {
@@ -106,8 +104,9 @@ pub fn load_provider_with_model(
         }
     });
 
-    let provider = normalize_provider_name(name)
-        .ok_or_else(|| anyhow::anyhow!("Unknown provider: {name}. Use: anthropic, copilot, openai"))?;
+    let provider = normalize_provider_name(name).ok_or_else(|| {
+        anyhow::anyhow!("Unknown provider: {name}. Use: anthropic, copilot, openai")
+    })?;
     let model = model.unwrap_or_else(|| {
         model_catalog()
             .iter()
@@ -117,9 +116,15 @@ pub fn load_provider_with_model(
     });
 
     match provider {
-        "anthropic" => Ok(Box::new(anthropic::AnthropicProvider::from_auth_with_model(model)?)),
-        "copilot" => Ok(Box::new(copilot::CopilotProvider::from_auth_with_model(model)?)),
-        "openai" => Ok(Box::new(openai::OpenAIProvider::from_auth_with_model(model)?)),
+        "anthropic" => Ok(Box::new(
+            anthropic::AnthropicProvider::from_auth_with_model(model)?,
+        )),
+        "copilot" => Ok(Box::new(copilot::CopilotProvider::from_auth_with_model(
+            model,
+        )?)),
+        "openai" => Ok(Box::new(openai::OpenAIProvider::from_auth_with_model(
+            model,
+        )?)),
         _ => anyhow::bail!("Unknown provider: {provider}. Use: anthropic, copilot, openai"),
     }
 }

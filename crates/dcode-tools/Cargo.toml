@@ -16,3 +16,6 @@ walkdir = "2"
 glob    = "0.3"
 regex   = "1"
 similar = { version = "2", features = ["text"] }
+dirs.workspace = true
+reqwest.workspace = true
+base64.workspace  = true

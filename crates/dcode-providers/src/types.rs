@@ -51,7 +51,11 @@ impl Message {
 
     /// Estimate tokens for this message (4 chars ≈ 1 token heuristic).
     pub fn estimate_tokens(&self) -> usize {
-        self.content.iter().map(|b| b.estimate_tokens()).sum::<usize>() + 4
+        self.content
+            .iter()
+            .map(|b| b.estimate_tokens())
+            .sum::<usize>()
+            + 4
     }
 }
 
@@ -89,7 +93,10 @@ pub enum StreamEvent {
     /// The current tool call block is complete.
     ToolUseEnd,
     /// Token usage reported by the model.
-    Usage { input_tokens: u32, output_tokens: u32 },
+    Usage {
+        input_tokens: u32,
+        output_tokens: u32,
+    },
     /// The model has finished (end_turn, tool_use, max_tokens, etc.).
     Done { stop_reason: StopReason },
 }
@@ -121,8 +128,24 @@ pub struct AuthStore {
     pub anthropic: Option<ProviderAuth>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub copilot: Option<CopilotAuth>,
+    /// Legacy API-key login (kept for backward compat).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub openai: Option<ProviderAuth>,
+    /// OAuth login via OpenAI device-code flow (preferred over api key).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub openai_oauth: Option<OpenAiOAuth>,
+}
+
+/// Stored after a successful OpenAI device-code OAuth login.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct OpenAiOAuth {
+    /// Short-lived access token sent as Bearer on every API call.
+    pub access_token: String,
+    /// Long-lived refresh token used to obtain new access tokens.
+    pub refresh_token: String,
+    /// Unix timestamp (seconds) when `access_token` expires.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub expires_at: Option<i64>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
