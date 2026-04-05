@@ -31,8 +31,8 @@ jobs:
             target: aarch64-unknown-linux-musl
             archive: tar.gz
             binary: d-code
-          # macOS x86-64
-          - os: macos-13
+          # macOS x86-64 (cross-compiled from arm64 runner)
+          - os: macos-latest
             target: x86_64-apple-darwin
             archive: tar.gz
             binary: d-code
