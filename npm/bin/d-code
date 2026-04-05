@@ -1,0 +1,20 @@
+#!/usr/bin/env node
+// This file is a placeholder. The real binary is downloaded by install.js during npm install.
+// If you see this message, the postinstall script may have failed.
+const { execFileSync } = require("child_process");
+const path = require("path");
+const fs = require("fs");
+
+const isWin = process.platform === "win32";
+const bin = path.join(__dirname, isWin ? "d-code.exe" : "d-code-bin");
+
+if (!fs.existsSync(bin)) {
+  console.error("[d-code] Binary not found. Try reinstalling: npm install -g @dcode-dev/d-code");
+  process.exit(1);
+}
+
+try {
+  execFileSync(bin, process.argv.slice(2), { stdio: "inherit" });
+} catch (e) {
+  process.exit(e.status ?? 1);
+}

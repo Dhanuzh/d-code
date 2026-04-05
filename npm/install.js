@@ -45,13 +45,15 @@ if (!target) {
 }
 
 const isWindows = platform === "win32";
+// Use "d-code-bin" on unix so it doesn't conflict with the JS shim named "d-code".
 const binaryName = isWindows ? "d-code.exe" : "d-code";
+const installedName = isWindows ? "d-code.exe" : "d-code-bin";
 const archiveName = isWindows
   ? `d-code-${target}.zip`
   : `d-code-${target}.tar.gz`;
 const downloadUrl = `https://github.com/${REPO}/releases/download/v${VERSION}/${archiveName}`;
 const binDir = path.join(__dirname, "bin");
-const binaryPath = path.join(binDir, binaryName);
+const binaryPath = path.join(binDir, installedName);
 
 // If binary already exists (e.g. in CI or re-install), skip download.
 if (fs.existsSync(binaryPath)) {
@@ -69,6 +71,11 @@ console.log(`         ${downloadUrl}`);
 
 downloadAndExtract(downloadUrl, archiveName, binaryName, binaryPath)
   .then(() => {
+    // Rename extracted binary to installedName if different.
+    const extractedPath = path.join(binDir, binaryName);
+    if (extractedPath !== binaryPath && fs.existsSync(extractedPath)) {
+      fs.renameSync(extractedPath, binaryPath);
+    }
     fs.chmodSync(binaryPath, 0o755);
     console.log(`[d-code] Installed to ${binaryPath}`);
   })

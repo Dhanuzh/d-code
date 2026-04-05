@@ -1,5 +1,5 @@
 {
-  "name": "d-code",
+  "name": "@dcode-dev/d-code",
   "version": "0.1.0",
   "description": "Lightweight AI coding agent for your terminal — powered by Claude, GPT-4, and GitHub Copilot",
   "keywords": [
