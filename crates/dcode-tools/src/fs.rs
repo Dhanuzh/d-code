@@ -16,9 +16,10 @@ pub struct ReadArgs {
     pub end_line: Option<usize>,
 }
 
-pub fn read_file(args: ReadArgs) -> anyhow::Result<String> {
+pub async fn read_file(args: ReadArgs) -> anyhow::Result<String> {
     let path = PathBuf::from(&args.path);
-    let content = std::fs::read_to_string(&path).with_context(|| format!("read {}", args.path))?;
+    let content = tokio::fs::read_to_string(&path).await
+        .with_context(|| format!("read {}", args.path))?;
 
     let lines: Vec<&str> = content.lines().collect();
     let total = lines.len();

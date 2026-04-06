@@ -122,6 +122,10 @@ impl Agent {
         // turn to prevent burning tokens on a stuck loop (same pattern as opencode).
         let mut doom_tracker: HashMap<String, usize> = HashMap::new();
 
+        // Per-turn read cache: (path|start|end) → result string.
+        // Prevents re-reading the same file section if the model requests it twice.
+        let mut read_cache: HashMap<String, String> = HashMap::new();
+
         for _iter in 0..max_iterations {
             let mut stream = self
                 .provider
@@ -231,30 +235,62 @@ impl Agent {
             }
 
             // ── Execute tool calls ──────────────────────────────────────────────
-            // Interactive tools (ask_user, bash with confirmation) run sequentially.
-            // Pure read-only tools (read_file, glob, grep, list_dir, read_image) run
-            // in parallel to eliminate round-trip latency when the model batches them.
+            // Parallelism strategy:
+            //   • read_file, glob, grep, list_dir, read_image: always parallel (pure reads)
+            //   • web_fetch, web_search: always parallel (independent network I/O)
+            //   • write_file, edit_file: parallel only when all target different paths
+            //   • bash, ask_user: always sequential (side-effects / interactive)
+            //
+            // ToolDone events fire as each parallel tool finishes (FuturesUnordered),
+            // not all-at-once after join_all. This gives the user progressive feedback.
+            //
+            // Per-turn read cache: if the model reads the same file+range twice, the
+            // second call is served from memory without re-reading disk or burning tokens.
             let mut tool_results: Vec<ContentBlock> = vec![];
 
-            // Partition: interactive vs parallelisable.
-            let is_parallel_safe = |name: &str| {
-                matches!(name, "read_file" | "glob" | "grep" | "list_dir" | "read_image")
-            };
-
-            // Handle interactive tools sequentially first, preserving order via index.
-            let mut parallel_indices: Vec<usize> = vec![];
+            // Pre-fill results vec with placeholders.
             let placeholder = ContentBlock::ToolResult {
                 tool_use_id: String::new(),
                 content: String::new(),
                 is_error: false,
             };
-            // Pre-fill results vec with placeholders; fill in order below.
             tool_results.resize(tool_calls.len(), placeholder);
 
+            // Decide write/edit parallelism: safe only if no two calls share the same path.
+            let write_conflict = {
+                let mut paths = std::collections::HashSet::new();
+                let mut conflict = false;
+                for tc in &tool_calls {
+                    if matches!(tc.name.as_str(), "write_file" | "edit_file") {
+                        let p = tc.input["path"].as_str().unwrap_or("").to_string();
+                        if !p.is_empty() && !paths.insert(p) {
+                            conflict = true;
+                            break;
+                        }
+                    }
+                }
+                conflict
+            };
+
+            let is_parallel_safe = |name: &str| -> bool {
+                match name {
+                    // Pure read-only: always safe to parallelize.
+                    "read_file" | "glob" | "grep" | "list_dir" | "read_image" => true,
+                    // Independent network I/O: safe to parallelize.
+                    "web_fetch" | "web_search" => true,
+                    // Write ops: safe only when all target different paths.
+                    "write_file" | "edit_file" => !write_conflict,
+                    _ => false,
+                }
+            };
+
+            let mut parallel_indices: Vec<usize> = vec![];
+
+            // ── Sequential tools (bash, ask_user, conflicting writes) ──────────
             for (i, tc) in tool_calls.iter().enumerate() {
                 if is_parallel_safe(&tc.name) {
                     parallel_indices.push(i);
-                    continue; // deferred
+                    continue;
                 }
 
                 // ask_user
@@ -319,29 +355,73 @@ impl Agent {
                 });
                 tool_results[i] = ContentBlock::ToolResult {
                     tool_use_id: tc.id.clone(),
-                    content: compact_tool_result(&result),
+                    content: compact_tool_result(&tc.name, &result),
                     is_error,
                 };
             }
 
-            // Run parallel-safe tools concurrently.
+            // ── Parallel tools — FuturesUnordered for progressive ToolDone ────
+            // Events fire as each tool finishes, not all-at-once after join_all.
             if !parallel_indices.is_empty() {
-                let futures: Vec<_> = parallel_indices.iter().map(|&i| {
+                // Check per-turn cache for read_file hits before dispatching.
+                let mut cache_hits: Vec<usize> = vec![];
+                let mut dispatch_indices: Vec<usize> = vec![];
+                for &i in &parallel_indices {
                     let tc = &tool_calls[i];
-                    let name = tc.name.clone();
-                    let input = tc.input.clone();
-                    let cwd = self.cwd.clone();
-                    async move {
-                        let (result, is_error) = match dcode_tools::dispatch(&name, &input, &cwd).await {
-                            Ok(r) => (r, false),
-                            Err(e) => (format!("Error: {e}"), true),
-                        };
-                        (i, name, input, result, is_error)
+                    if tc.name == "read_file" {
+                        let key = read_cache_key(&tc.input);
+                        if read_cache.contains_key(&key) {
+                            cache_hits.push(i);
+                            continue;
+                        }
                     }
-                }).collect();
+                    dispatch_indices.push(i);
+                }
 
-                let outcomes = futures::future::join_all(futures).await;
-                for (i, name, input, result, is_error) in outcomes {
+                // Serve cache hits immediately.
+                for i in cache_hits {
+                    let tc = &tool_calls[i];
+                    let key = read_cache_key(&tc.input);
+                    let result = read_cache[&key].clone();
+                    on_event(AgentEvent::ToolDone {
+                        name: tc.name.clone(),
+                        input: tc.input.clone(),
+                        result: result.clone(),
+                        is_error: false,
+                    });
+                    tool_results[i] = ContentBlock::ToolResult {
+                        tool_use_id: tc.id.clone(),
+                        content: compact_tool_result(&tc.name, &result),
+                        is_error: false,
+                    };
+                }
+
+                // Dispatch remaining in parallel; emit ToolDone as each completes.
+                let mut futs: futures::stream::FuturesUnordered<_> = dispatch_indices
+                    .iter()
+                    .map(|&i| {
+                        let tc = &tool_calls[i];
+                        let name = tc.name.clone();
+                        let input = tc.input.clone();
+                        let cwd = self.cwd.clone();
+                        async move {
+                            let (result, is_error) =
+                                match dcode_tools::dispatch(&name, &input, &cwd).await {
+                                    Ok(r) => (r, false),
+                                    Err(e) => (format!("Error: {e}"), true),
+                                };
+                            (i, name, input, result, is_error)
+                        }
+                    })
+                    .collect();
+
+                use futures::StreamExt;
+                while let Some((i, name, input, result, is_error)) = futs.next().await {
+                    // Cache successful read_file results for this turn.
+                    if name == "read_file" && !is_error {
+                        let key = read_cache_key(&input);
+                        read_cache.insert(key, result.clone());
+                    }
                     on_event(AgentEvent::ToolDone {
                         name,
                         input,
@@ -350,7 +430,7 @@ impl Agent {
                     });
                     tool_results[i] = ContentBlock::ToolResult {
                         tool_use_id: tool_calls[i].id.clone(),
-                        content: compact_tool_result(&result),
+                        content: compact_tool_result(&tool_calls[i].name, &result),
                         is_error,
                     };
                 }
@@ -384,28 +464,35 @@ impl Agent {
 
     fn pick_max_tokens(&self, user_input: &str, no_tools: bool) -> u32 {
         let text = user_input.to_ascii_lowercase();
-        let budget = self.default_max_tokens; // 4096
 
-        // Simple Q&A: cap at 1 500 to avoid over-generating.
-        if no_tools
-            && ["explain", "what", "why", "how", "summarize", "summary", "status", "describe"]
-                .iter()
-                .any(|k| text.contains(k))
-        {
-            return budget.min(1_500);
-        }
-
-        // Heavyweight code generation: raise ceiling.
+        // Heavyweight code generation: raise ceiling to 8k.
+        // These requests often produce large diffs or full implementations.
         if ["refactor", "implement", "generate", "scaffold", "rewrite",
-            "full implementation", "complete", "entire", "all files"]
+            "full implementation", "complete everything", "entire", "all files",
+            "migrate", "overhaul"]
             .iter()
             .any(|k| text.contains(k))
             || user_input.len() > 2_000
         {
-            return budget.max(8_192);
+            return 8_192;
         }
 
-        budget
+        // Simple Q&A with no tools: cap at 2k (enough for a detailed explanation).
+        if no_tools {
+            return 2_048;
+        }
+
+        // Context pressure: if session is > 70% full, limit output to avoid overflow.
+        let ctx_used = self.session.estimated_tokens();
+        let ctx_window = self.provider.context_window();
+        let ctx_pct = (ctx_used as f64 * 100.0) / ctx_window as f64;
+        if ctx_pct >= 70.0 {
+            // Leave room — don't use more than 20% of the window for output.
+            let headroom = ((ctx_window as f64 * 0.20) as u32).max(1_024);
+            return headroom.min(self.default_max_tokens);
+        }
+
+        self.default_max_tokens // 4096
     }
 }
 
@@ -469,19 +556,37 @@ fn trim_old_tool_results(messages: &mut Vec<Message>, keep_recent: usize) {
     }
 }
 
+/// Per-tool maximum inline result size (chars) kept in message history.
+/// Smaller for tools whose output the model rarely needs verbatim later.
+fn tool_result_limit(name: &str) -> usize {
+    match name {
+        // File writes/edits return short confirmation — no truncation needed.
+        "write_file" | "edit_file" => 500,
+        // grep/glob can be large but model only needs key lines.
+        "grep" | "glob" | "list_dir" => 8_000,
+        // Bash output: keep a generous window for build/test logs.
+        "bash" | "run_command" => 10_000,
+        // Web content can be very large; 6k keeps a full article section.
+        "web_fetch" | "web_search" => 6_000,
+        // read_file: keep more — model uses this for precise edits.
+        "read_file" => 14_000,
+        // Images stay intact (base64 must not be truncated).
+        "read_image" => usize::MAX,
+        _ => 12_000,
+    }
+}
+
 /// Trim a fresh tool result before storing in message history.
-/// 12 000 chars ≈ 3 000 tokens.
 /// Image data URIs are kept intact — truncating base64 corrupts the image.
-fn compact_tool_result(result: &str) -> String {
-    // Never truncate image data URIs — must remain intact for provider serialization.
+fn compact_tool_result(name: &str, result: &str) -> String {
     if result.starts_with("data:image/") {
         return result.to_string();
     }
-    const MAX: usize = 12_000;
-    if result.len() <= MAX {
+    let max = tool_result_limit(name);
+    if result.len() <= max {
         return result.to_string();
     }
-    let mut end = MAX;
+    let mut end = max;
     while end > 0 && !result.is_char_boundary(end) {
         end -= 1;
     }
@@ -492,53 +597,69 @@ fn compact_tool_result(result: &str) -> String {
     )
 }
 
+/// Stable cache key for read_file: "path|start|end"
+fn read_cache_key(input: &serde_json::Value) -> String {
+    format!(
+        "{}|{}|{}",
+        input["path"].as_str().unwrap_or(""),
+        input["start_line"].as_u64().unwrap_or(0),
+        input["end_line"].as_u64().unwrap_or(0),
+    )
+}
+
 fn should_enable_tools(input: &str) -> bool {
     let s = input.to_ascii_lowercase();
 
-    // Pure question starters → no tools needed (saves tokens on Q&A).
-    let is_pure_qa = ["what is", "what are", "why is", "why are", "how does", "how do",
-        "explain", "describe", "tell me", "can you tell", "summarize", "summary",
-        "what does", "what did", "what should", "help me understand",
+    // Absolute no-tools: single-word queries or pure social messages.
+    if s.split_whitespace().count() <= 2 {
+        return false;
+    }
+
+    // Always enable tools if the message is likely action-oriented.
+    // These patterns strongly imply the user wants the agent to DO something.
+    let action_hints = [
+        // File operations
+        "file", "read", "write", "edit", "create", "open", "save", "delete",
+        // Code work
+        "fix", "patch", "refactor", "implement", "add", "update", "remove", "change",
+        "rename", "move", "copy", "import",
+        // Build/test/run
+        "test", "build", "run", "compile", "cargo", "npm", "yarn", "make", "lint",
+        "format", "check", "coverage", "install",
+        // Git
+        "git", "commit", "branch", "merge", "diff", "push", "pull", "clone", "stash",
+        // Search
+        "search", "grep", "find", "locate", "look for", "where is",
+        // Debug
+        "bug", "error", "fail", "crash", "debug", "trace", "issue", "problem",
+        // Web
+        "fetch", "download", "url", "http", "browse", "web",
+        // Images/files by extension
+        ".rs", ".toml", ".json", ".py", ".ts", ".js", ".go", ".yaml", ".yml",
+        ".png", ".jpg", ".jpeg", ".gif", ".webp", ".md", ".txt", ".csv",
+        // Paths
+        "src/", "crates/", "lib/", "bin/", "tests/", "docs/",
+        // Show/display
+        "show me", "list", "show", "display", "print", "tell me about",
+        // Analysis
+        "analyze", "review", "optimize", "improve", "performance", "check",
+        "understand", "explain this", "what does this",
+    ];
+
+    if action_hints.iter().any(|k| s.contains(k)) {
+        return true;
+    }
+
+    // Disable tools only for clearly abstract questions with no codebase context.
+    let is_abstract_qa = [
+        "what is rust", "what is python", "what is a", "what is an",
+        "how does rust work", "how does async work", "tell me a joke",
+        "what are the benefits of", "why use rust",
     ]
     .iter()
     .any(|k| s.starts_with(k));
 
-    if is_pure_qa {
-        // Still allow tools if the question references a specific file path or line.
-        let has_file_ref = s.contains(".rs") || s.contains(".toml") || s.contains(".json")
-            || s.contains(".py") || s.contains(".ts") || s.contains(".js")
-            || s.contains("line ") || s.contains("src/") || s.contains("crate");
-        if !has_file_ref {
-            return false;
-        }
-    }
-
-    [
-        // Explicit file/edit actions
-        "read file", "write file", "edit file", "open file", "create file", "delete file",
-        "read the file", "edit the", "write to", "save to",
-        // Code mutations
-        "fix", "patch", "refactor", "implement", "add ", "update ", "remove ", "change ",
-        "rename", "move ", "copy ",
-        // Build/test/run
-        "test", "build", "run ", "compile", "cargo", "npm", "yarn", "make ", "lint",
-        "format", "check ", "coverage",
-        // Git actions
-        "git ", "commit", "branch", "merge", "diff", "push", "pull", "clone",
-        // Search actions
-        "search", "grep", "find ", "locate",
-        // Debug
-        "bug", "error", "fail", "crash", "debug", "trace",
-        // Directory listing (explicit request)
-        "list files", "list dir", "show files", "show dir",
-        // Web / fetch (action verbs)
-        "fetch ", "download", "curl ", "browse ",
-        // Image paths / vision
-        "image", "screenshot", "photo", ".png", ".jpg", ".jpeg", ".gif", ".webp",
-        "look at this", "see this", "read this image",
-    ]
-    .iter()
-    .any(|k| s.contains(k))
+    !is_abstract_qa
 }
 
 /// Returns true if the bash command matches known dangerous patterns.

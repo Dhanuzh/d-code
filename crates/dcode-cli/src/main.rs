@@ -122,7 +122,7 @@ async fn run_oneshot(
                 is_error,
                 ..
             } => {
-                render::print_tool_done(&name, &input, is_error);
+                render::print_tool_done(&name, &input, "", is_error, 0);
             }
             AgentEvent::TokenUsage { .. } => {}
             AgentEvent::UserQuestion { question, choices } => {

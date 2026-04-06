@@ -45,6 +45,13 @@ tokio-util = { version = "0.7", features = ["codec", "io"] }
 
 [profile.release]
 opt-level     = 3
-lto           = "thin"
-codegen-units = 1
-strip         = true
+lto           = "fat"       # whole-program LTO: cross-crate inlining + dead-code elim
+codegen-units = 1           # single unit: LLVM optimizes entire binary as one pass
+strip         = "symbols"   # remove debug symbols → smaller binary
+panic         = "abort"     # no unwinding machinery → smaller + faster
+
+# Fast dev builds: minimal debug info, parallel codegen, no optimizations.
+[profile.dev]
+opt-level     = 0
+debug         = 1           # line tables only (faster than full debug = 2)
+codegen-units = 256         # maximum parallelism for incremental builds

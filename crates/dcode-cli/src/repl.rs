@@ -43,13 +43,36 @@ impl Spinner {
         let running = Arc::new(AtomicBool::new(true));
         let flag = Arc::clone(&running);
         let handle = tokio::spawn(async move {
+            // Braille frames for smooth spinner animation.
             let frames = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
+            // Shimmer: cycle green brightness to create a pulse on the spinner char.
+            let shimmer: &[(u8, u8, u8)] = &[
+                (45, 95, 60),
+                (52, 120, 72),
+                (60, 148, 84),
+                (68, 170, 96),
+                (75, 190, 108),
+                (80, 200, 118),  // peak
+                (75, 188, 108),
+                (68, 165, 95),
+                (58, 138, 80),
+                (50, 108, 66),
+            ];
+            let start = std::time::Instant::now();
             let mut i = 0usize;
             loop {
                 if !flag.load(Ordering::Relaxed) {
                     break;
                 }
-                print!("\r  {} thinking...", frames[i % frames.len()]);
+                let secs = start.elapsed().as_secs_f32();
+                let elapsed = if secs < 10.0 {
+                    format!("{:.1}s", secs)
+                } else {
+                    format!("{:.0}s", secs)
+                };
+                let (sr, sg, sb) = shimmer[i % shimmer.len()];
+                print!("\r  \x1b[38;2;{sr};{sg};{sb}m{}\x1b[0m \x1b[38;2;90;98;118mthinking\x1b[0m  \x1b[38;2;55;62;76m{elapsed}\x1b[0m",
+                    frames[i % frames.len()]);
                 let _ = std::io::stdout().flush();
                 tokio::time::sleep(std::time::Duration::from_millis(80)).await;
                 i += 1;
@@ -61,7 +84,6 @@ impl Spinner {
     fn stop(self) {
         self.running.store(false, Ordering::Relaxed);
         self.handle.abort();
-        // Clear the spinner line immediately.
         print!("\r");
         let _ = crossterm::execute!(
             std::io::stdout(),
@@ -490,12 +512,19 @@ pub async fn run(cwd: PathBuf, provider_name: Option<String>) -> anyhow::Result<
                 let mut xml_filter = render::XmlFilter::new();
                 let spinner = Spinner::start();
                 let mut spinner_opt = Some(spinner);
+                let mut tool_start: std::collections::HashMap<String, std::time::Instant> =
+                    std::collections::HashMap::new();
 
+                let mut turn_divider_shown = false;
                 if let Err(e) = agent
                     .run_turn(&input, |ev| match ev {
                         AgentEvent::TextDelta(t) => {
                             if let Some(sp) = spinner_opt.take() {
                                 sp.stop();
+                            }
+                            if !turn_divider_shown {
+                                turn_divider_shown = true;
+                                render::print_turn_divider();
                             }
                             let clean = xml_filter.push(&t);
                             if !clean.is_empty() {
@@ -511,15 +540,19 @@ pub async fn run(cwd: PathBuf, provider_name: Option<String>) -> anyhow::Result<
                                 md.push(&leftover);
                             }
                             md.flush();
+                            tool_start.insert(name.clone(), std::time::Instant::now());
                             render::print_tool_start(&name);
                         }
                         AgentEvent::ToolDone {
                             name,
                             input,
+                            result,
                             is_error,
-                            ..
                         } => {
-                            render::print_tool_done(&name, &input, is_error);
+                            let elapsed_ms = tool_start.remove(&name)
+                                .map(|t| t.elapsed().as_millis() as u64)
+                                .unwrap_or(0);
+                            render::print_tool_done(&name, &input, &result, is_error, elapsed_ms);
                             // Show spinner again while waiting for next chunk.
                             spinner_opt = Some(Spinner::start());
                         }
@@ -550,7 +583,7 @@ pub async fn run(cwd: PathBuf, provider_name: Option<String>) -> anyhow::Result<
                                 md.push(&leftover);
                             }
                             md.flush();
-                            println!("\n");
+                            println!();
                         }
                     })
                     .await
@@ -751,8 +784,13 @@ fn print_turn_cost(delta_tokens: u32, model: &str) {
     let est = ((delta_tokens as f64 * 0.7) / 1_000_000.0) * in_rate
         + ((delta_tokens as f64 * 0.3) / 1_000_000.0) * out_rate;
     if est >= 0.0001 {
+        let tok_str = if delta_tokens >= 1000 {
+            format!("{:.1}k", delta_tokens as f64 / 1000.0)
+        } else {
+            delta_tokens.to_string()
+        };
         println!(
-            "  \x1b[2m~{delta_tokens} tokens this turn · est. ~${est:.4}\x1b[0m"
+            "  \x1b[38;2;50;56;70m\x1b[2m{tok_str} tokens  ~${est:.4}\x1b[0m"
         );
     }
 }

@@ -466,50 +466,67 @@ fn find_byte(s: &str, needle: u8, from: usize) -> Option<usize> {
 // ─── Tool display ─────────────────────────────────────────────────────────────
 
 pub fn print_tool_start(name: &str) {
-    let icon = tool_icon(name);
     let _ = execute!(
         stdout(),
         Print("\n"),
-        SetForegroundColor(Color::Rgb { r: 80, g: 85, b: 105 }),
-        Print(format!("  {} ", icon)),
-        SetForegroundColor(Color::Rgb { r: 120, g: 130, b: 150 }),
+        SetForegroundColor(Color::Rgb { r: 60, g: 68, b: 85 }),
+        Print("  ◦ "),
+        SetForegroundColor(Color::Rgb { r: 95, g: 105, b: 125 }),
+        SetAttribute(Attribute::Dim),
         Print(name),
+        SetAttribute(Attribute::Reset),
         ResetColor,
     );
     let _ = stdout().flush();
 }
 
-pub fn print_tool_done(name: &str, input: &serde_json::Value, is_error: bool) {
+pub fn print_tool_done(name: &str, input: &serde_json::Value, result: &str, is_error: bool, elapsed_ms: u64) {
     let detail = tool_detail(name, input);
-    let icon = tool_icon(name);
+    let elapsed_str = if elapsed_ms >= 1000 {
+        format!("  · {:.2}s", elapsed_ms as f64 / 1000.0)
+    } else if elapsed_ms > 0 {
+        format!("  · {}ms", elapsed_ms)
+    } else {
+        String::new()
+    };
     let _ = execute!(stdout(), MoveToColumn(0), Clear(ClearType::CurrentLine));
 
     if is_error {
         let _ = execute!(
             stdout(),
-            SetForegroundColor(Color::Rgb { r: 200, g: 70, b: 70 }),
-            Print(format!("  {} ", icon)),
-            SetAttribute(Attribute::Bold),
-            Print(format!("✗ {name}")),
-            SetAttribute(Attribute::Reset),
-            SetForegroundColor(Color::Rgb { r: 160, g: 80, b: 80 }),
+            SetForegroundColor(Color::Rgb { r: 190, g: 65, b: 65 }),
+            Print("  ✗ "),
+            SetForegroundColor(Color::Rgb { r: 210, g: 100, b: 100 }),
+            Print(name),
+            ResetColor,
+            SetForegroundColor(Color::Rgb { r: 140, g: 70, b: 70 }),
             Print(if detail.is_empty() { String::new() } else { format!("  {detail}") }),
+            SetForegroundColor(Color::Rgb { r: 80, g: 70, b: 70 }),
+            SetAttribute(Attribute::Dim),
+            Print(&elapsed_str),
+            SetAttribute(Attribute::Reset),
             ResetColor,
             Print("\n"),
         );
+        if !result.is_empty() {
+            print_tool_output_preview(result, true);
+        }
     } else {
         let _ = execute!(
             stdout(),
-            SetForegroundColor(Color::Rgb { r: 60, g: 165, b: 80 }),
-            Print(format!("  {} ", icon)),
-            SetForegroundColor(Color::Rgb { r: 80, g: 85, b: 105 }),
-            Print(format!("✓ {name}")),
-            SetForegroundColor(Color::Rgb { r: 100, g: 110, b: 125 }),
+            SetForegroundColor(Color::Rgb { r: 55, g: 150, b: 75 }),
+            Print("  ✓ "),
+            SetForegroundColor(Color::Rgb { r: 95, g: 105, b: 125 }),
+            Print(name),
+            SetForegroundColor(Color::Rgb { r: 70, g: 78, b: 95 }),
             Print(if detail.is_empty() { String::new() } else { format!("  {detail}") }),
+            SetForegroundColor(Color::Rgb { r: 60, g: 68, b: 82 }),
+            SetAttribute(Attribute::Dim),
+            Print(&elapsed_str),
+            SetAttribute(Attribute::Reset),
             ResetColor,
             Print("\n"),
         );
-        // Inline diff for file mutations.
         if name == "edit_file" {
             if let (Some(old), Some(new)) = (input["old_string"].as_str(), input["new_string"].as_str()) {
                 print_inline_diff(old, new);
@@ -520,12 +537,54 @@ pub fn print_tool_done(name: &str, input: &serde_json::Value, is_error: bool) {
                 let bytes = content.len();
                 let _ = execute!(
                     stdout(),
-                    SetForegroundColor(Color::Rgb { r: 80, g: 120, b: 80 }),
-                    Print(format!("      {lines} lines · {bytes} bytes written\n")),
+                    SetForegroundColor(Color::Rgb { r: 55, g: 100, b: 65 }),
+                    SetAttribute(Attribute::Dim),
+                    Print(format!("  └ {lines} lines · {bytes} bytes\n")),
+                    SetAttribute(Attribute::Reset),
                     ResetColor,
                 );
             }
+        } else if name == "bash" || name == "run_command" {
+            if !result.is_empty() {
+                print_tool_output_preview(result, false);
+            }
         }
+    }
+    let _ = stdout().flush();
+}
+
+/// Print first 5 lines of tool output with `│`/`└` tree prefix.
+fn print_tool_output_preview(output: &str, is_error: bool) {
+    const MAX_PREVIEW: usize = 5;
+    // Skip blank prefix lines for cleaner look.
+    let all_lines: Vec<&str> = output.lines().filter(|l| !l.trim().is_empty()).collect();
+    let total = all_lines.len();
+    if total == 0 { return; }
+    let show = total.min(MAX_PREVIEW);
+    let (fg_r, fg_g, fg_b) = if is_error { (140, 80, 80) } else { (80, 90, 108) };
+    for (i, line) in all_lines[..show].iter().enumerate() {
+        let is_last = i + 1 == show;
+        let prefix = if is_last && total <= MAX_PREVIEW { "  └ " } else { "  │ " };
+        let truncated = truncate_line(line, 100);
+        let _ = execute!(
+            stdout(),
+            SetForegroundColor(Color::Rgb { r: fg_r, g: fg_g, b: fg_b }),
+            SetAttribute(Attribute::Dim),
+            Print(format!("{prefix}{truncated}\n")),
+            SetAttribute(Attribute::Reset),
+            ResetColor,
+        );
+    }
+    if total > MAX_PREVIEW {
+        let remaining = total - MAX_PREVIEW;
+        let _ = execute!(
+            stdout(),
+            SetForegroundColor(Color::Rgb { r: fg_r, g: fg_g, b: fg_b }),
+            SetAttribute(Attribute::Dim),
+            Print(format!("  └ … +{remaining} lines\n")),
+            SetAttribute(Attribute::Reset),
+            ResetColor,
+        );
     }
     let _ = stdout().flush();
 }
@@ -555,9 +614,13 @@ pub fn print_inline_diff(old: &str, new: &str) {
                 if shown < MAX_DIFF_LINES {
                     let _ = execute!(
                         out,
-                        SetForegroundColor(Color::Rgb { r: 200, g: 70, b: 70 }),
-                        Print(format!("  − {}\n", truncate_line(line, 100))),
+                        SetBackgroundColor(Color::Rgb { r: 55, g: 18, b: 18 }),
+                        SetForegroundColor(Color::Rgb { r: 185, g: 75, b: 75 }),
+                        Print("  − "),
+                        SetForegroundColor(Color::Rgb { r: 205, g: 125, b: 125 }),
+                        Print(truncate_line(line, 100)),
                         ResetColor,
+                        Print("\n"),
                     );
                     shown += 1;
                 } else {
@@ -568,9 +631,13 @@ pub fn print_inline_diff(old: &str, new: &str) {
                 if shown < MAX_DIFF_LINES {
                     let _ = execute!(
                         out,
-                        SetForegroundColor(Color::Rgb { r: 60, g: 185, b: 90 }),
-                        Print(format!("  + {}\n", truncate_line(line, 100))),
+                        SetBackgroundColor(Color::Rgb { r: 18, g: 48, b: 26 }),
+                        SetForegroundColor(Color::Rgb { r: 55, g: 155, b: 78 }),
+                        Print("  + "),
+                        SetForegroundColor(Color::Rgb { r: 125, g: 195, b: 148 }),
+                        Print(truncate_line(line, 100)),
                         ResetColor,
+                        Print("\n"),
                     );
                     shown += 1;
                 } else {
@@ -583,8 +650,10 @@ pub fn print_inline_diff(old: &str, new: &str) {
     if hidden > 0 {
         let _ = execute!(
             out,
-            SetForegroundColor(Color::Rgb { r: 80, g: 90, b: 110 }),
-            Print(format!("  … {hidden} more lines changed\n")),
+            SetForegroundColor(Color::Rgb { r: 68, g: 76, b: 92 }),
+            SetAttribute(Attribute::Dim),
+            Print(format!("  … {hidden} more lines\n")),
+            SetAttribute(Attribute::Reset),
             ResetColor,
         );
     }
@@ -638,39 +707,36 @@ fn truncate_line(s: &str, max: usize) -> String {
     }
 }
 
-fn tool_icon(name: &str) -> &'static str {
-    match name {
-        "read_file" => "📖",
-        "write_file" => "✍",
-        "edit_file" => "✏",
-        "bash" => "⚡",
-        "grep" => "🔍",
-        "glob" => "📂",
-        "list_dir" => "📁",
-        _ => "⚙",
-    }
-}
-
 /// Extract a short human-readable detail from tool input.
 fn tool_detail(name: &str, input: &serde_json::Value) -> String {
+    // Shorten a path to last 3 components for display.
+    fn short_path(p: &str) -> String {
+        let parts: Vec<&str> = p.trim_start_matches('/').split('/').collect();
+        if parts.len() <= 3 {
+            p.to_string()
+        } else {
+            format!("…/{}", parts[parts.len() - 3..].join("/"))
+        }
+    }
     match name {
-        "read_file" | "write_file" | "list_dir" => input["path"].as_str().unwrap_or("").to_string(),
-        "edit_file" => input["path"].as_str().unwrap_or("").to_string(),
-        "bash" => {
+        "read_file" => input["path"].as_str().map(short_path).unwrap_or_default(),
+        "write_file" | "edit_file" => input["path"].as_str().map(short_path).unwrap_or_default(),
+        "list_dir" => input["path"].as_str().map(short_path).unwrap_or_default(),
+        "bash" | "run_command" => {
             let cmd = input["command"].as_str().unwrap_or("");
-            // Truncate long commands.
-            if cmd.len() > 60 {
-                format!("{}…", &cmd[..57])
+            if cmd.chars().count() > 64 {
+                format!("{}…", &cmd[..cmd.char_indices().nth(61).map(|(i,_)|i).unwrap_or(61)])
             } else {
                 cmd.to_string()
             }
         }
         "grep" => {
             let pat = input["pattern"].as_str().unwrap_or("");
-            let path = input["path"].as_str().unwrap_or("");
-            format!("/{}/  {}", pat, path)
+            let path = input["path"].as_str().unwrap_or(".");
+            format!("/{pat}/  {}", short_path(path))
         }
         "glob" => input["pattern"].as_str().unwrap_or("").to_string(),
+        "read_image" => input["path"].as_str().map(short_path).unwrap_or_default(),
         _ => String::new(),
     }
 }
@@ -680,11 +746,10 @@ fn tool_detail(name: &str, input: &serde_json::Value) -> String {
 pub fn print_info(msg: &str) {
     let _ = execute!(
         stdout(),
-        SetBackgroundColor(Color::Rgb { r: 40, g: 44, b: 52 }),
-        SetForegroundColor(Color::Rgb { r: 140, g: 150, b: 165 }),
-        Print("  "),
+        SetForegroundColor(Color::Rgb { r: 95, g: 105, b: 125 }),
+        Print("  · "),
+        SetForegroundColor(Color::Rgb { r: 155, g: 162, b: 178 }),
         Print(msg),
-        Print("  "),
         ResetColor,
         Print("\n"),
     );
@@ -693,10 +758,9 @@ pub fn print_info(msg: &str) {
 pub fn print_success(msg: &str) {
     let _ = execute!(
         stdout(),
-        SetForegroundColor(Color::Rgb { r: 80, g: 200, b: 120 }),
+        SetForegroundColor(Color::Rgb { r: 55, g: 155, b: 78 }),
         Print("  ✓ "),
-        ResetColor,
-        SetForegroundColor(Color::Rgb { r: 215, g: 220, b: 230 }),
+        SetForegroundColor(Color::Rgb { r: 160, g: 205, b: 175 }),
         Print(msg),
         ResetColor,
         Print("\n"),
@@ -706,10 +770,9 @@ pub fn print_success(msg: &str) {
 pub fn print_warning(msg: &str) {
     let _ = execute!(
         stdout(),
-        SetForegroundColor(Color::Rgb { r: 255, g: 180, b: 50 }),
+        SetForegroundColor(Color::Rgb { r: 200, g: 145, b: 40 }),
         Print("  ⚠  "),
-        ResetColor,
-        SetForegroundColor(Color::Rgb { r: 215, g: 200, b: 160 }),
+        SetForegroundColor(Color::Rgb { r: 200, g: 185, b: 130 }),
         Print(msg),
         ResetColor,
         Print("\n"),
@@ -719,13 +782,23 @@ pub fn print_warning(msg: &str) {
 pub fn print_error(msg: &str) {
     let _ = execute!(
         stdout(),
-        SetBackgroundColor(Color::Rgb { r: 80, g: 30, b: 30 }),
-        SetForegroundColor(Color::Rgb { r: 255, g: 100, b: 100 }),
-        Print(" ✗ "),
+        SetForegroundColor(Color::Rgb { r: 185, g: 65, b: 65 }),
+        Print("  ✗ "),
+        SetForegroundColor(Color::Rgb { r: 210, g: 120, b: 120 }),
         Print(msg),
-        Print(" "),
         ResetColor,
         Print("\n"),
+    );
+}
+
+/// Thin separator printed before each assistant response starts.
+pub fn print_turn_divider() {
+    let w = terminal::size().map(|(w, _)| w as usize).unwrap_or(80).min(72);
+    let _ = execute!(
+        stdout(),
+        SetForegroundColor(Color::Rgb { r: 45, g: 50, b: 62 }),
+        Print(format!("  {}\n", "─".repeat(w.saturating_sub(4)))),
+        ResetColor,
     );
 }
 
@@ -749,74 +822,95 @@ pub fn print_section_header(title: &str) {
 
 /// Print a welcome banner with provider status.
 pub fn print_welcome_banner(provider_info: &str, auth_store: &dcode_providers::AuthStore) {
-    let w = terminal::size().map(|(w, _)| w as usize).unwrap_or(80).min(70);
+    let w = terminal::size().map(|(w, _)| w as usize).unwrap_or(80).min(72);
+    let sep = "─".repeat(w.saturating_sub(2));
 
-    // Top border.
+    // Top separator.
     let _ = execute!(
         stdout(),
-        SetForegroundColor(Color::Rgb { r: 50, g: 55, b: 68 }),
-        Print(format!("  ╭{}╮\n", "─".repeat(w.saturating_sub(4)))),
+        Print("\n"),
+        SetForegroundColor(Color::Rgb { r: 45, g: 50, b: 62 }),
+        Print(format!("  {sep}\n")),
         ResetColor,
     );
 
-    // Title row: "d-code  ·  {provider}  ·  /help"
-    // Inner box width = w - 6  (2 indent + "│ " + " │")
-    let inner = w.saturating_sub(6);
-    // Visible content chars: "d-code" (6) + "  ·  " (5) + provider + "  ·  /help" (10)
-    let content_vis = 6 + 5 + visible_str_len(provider_info) + 10;
-    let padding = inner.saturating_sub(content_vis);
+    // Title row: "  d-code  ·  provider/model  ─────  /help"
+    // Right-align hints against terminal width.
+    let hints = "/help · /model · Tab";
+    let middle_vis = 8 + visible_str_len(provider_info); // "d-code  ·  " + provider
+    let fill = w.saturating_sub(2 + middle_vis + 2 + hints.len());
     let _ = execute!(
         stdout(),
-        SetForegroundColor(Color::Rgb { r: 50, g: 55, b: 68 }),
-        Print("  │ "),
-        ResetColor,
-        SetForegroundColor(Color::Rgb { r: 80, g: 200, b: 120 }),
+        Print("  "),
+        SetForegroundColor(Color::Rgb { r: 75, g: 195, b: 115 }),
         SetAttribute(Attribute::Bold),
         Print("d-code"),
+        SetAttribute(Attribute::Reset),
         ResetColor,
-        SetForegroundColor(Color::Rgb { r: 60, g: 65, b: 78 }),
+        SetForegroundColor(Color::Rgb { r: 55, g: 60, b: 75 }),
         Print("  ·  "),
         ResetColor,
-        SetForegroundColor(Color::Rgb { r: 180, g: 200, b: 220 }),
+        SetForegroundColor(Color::Rgb { r: 155, g: 175, b: 205 }),
         Print(provider_info),
         ResetColor,
-        SetForegroundColor(Color::Rgb { r: 60, g: 65, b: 78 }),
-        Print("  ·  "),
+        SetForegroundColor(Color::Rgb { r: 45, g: 50, b: 62 }),
+        Print(format!("  {}", "─".repeat(fill.saturating_sub(2)))),
         ResetColor,
-        SetForegroundColor(Color::Rgb { r: 100, g: 110, b: 130 }),
-        Print("/help"),
+        SetForegroundColor(Color::Rgb { r: 65, g: 72, b: 88 }),
+        SetAttribute(Attribute::Dim),
+        Print(format!("  {hints}")),
+        SetAttribute(Attribute::Reset),
         ResetColor,
-        Print(&" ".repeat(padding)),
-        SetForegroundColor(Color::Rgb { r: 50, g: 55, b: 68 }),
-        Print(" │\n"),
-        ResetColor,
+        Print("\n"),
     );
 
-    // Provider status row.
-    let anth = if auth_store.anthropic.is_some() { "\x1b[32m● anthropic\x1b[0m" } else { "\x1b[2m○ anthropic\x1b[0m" };
-    let cop  = if auth_store.copilot.is_some()   { "\x1b[32m● copilot\x1b[0m"   } else { "\x1b[2m○ copilot\x1b[0m"   };
-    let oai  = if auth_store.openai.is_some() || auth_store.openai_oauth.is_some() { "\x1b[32m● openai\x1b[0m" } else { "\x1b[2m○ openai\x1b[0m" };
-    let status_content = format!("  │  {}   {}   {}", anth, cop, oai);
-    let vis = visible_str_len(&status_content);
-    // total = vis + pad + 2 (" │") must equal w
-    let pad = w.saturating_sub(vis + 2);
-    print!("{}", status_content);
-    print!("{}", " ".repeat(pad));
-    let _ = execute!(
-        stdout(),
-        SetForegroundColor(Color::Rgb { r: 50, g: 55, b: 68 }),
-        Print(" │\n"),
-        ResetColor,
-    );
+    // Provider auth status row.
+    let dot_on  = "\x1b[38;2;55;155;78m●\x1b[0m";
+    let dot_off = "\x1b[2m○\x1b[0m";
+    let anth_dot = if auth_store.anthropic.is_some() { dot_on } else { dot_off };
+    let cop_dot  = if auth_store.copilot.is_some()   { dot_on } else { dot_off };
+    let oai_dot  = if auth_store.openai.is_some() || auth_store.openai_oauth.is_some() { dot_on } else { dot_off };
 
-    // Bottom border.
     let _ = execute!(
         stdout(),
-        SetForegroundColor(Color::Rgb { r: 50, g: 55, b: 68 }),
-        Print(format!("  ╰{}╯\n", "─".repeat(w.saturating_sub(4)))),
+        Print("  "),
+        SetForegroundColor(Color::Rgb { r: 80, g: 88, b: 108 }),
+        SetAttribute(Attribute::Dim),
+        Print("providers  "),
+        SetAttribute(Attribute::Reset),
         ResetColor,
     );
-    println!();
+    // Each provider with colored dot.
+    for (dot, label) in [
+        (anth_dot, "anthropic"),
+        (cop_dot, "copilot"),
+        (oai_dot, "openai"),
+    ] {
+        let active = !dot.contains("2m○"); // dim = inactive
+        print!("{dot} ");
+        let _ = execute!(
+            stdout(),
+            if active {
+                SetForegroundColor(Color::Rgb { r: 130, g: 145, b: 165 })
+            } else {
+                SetForegroundColor(Color::Rgb { r: 60, g: 65, b: 80 })
+            },
+            SetAttribute(if active { Attribute::Reset } else { Attribute::Dim }),
+            Print(format!("{label}  ")),
+            SetAttribute(Attribute::Reset),
+            ResetColor,
+        );
+    }
+
+    // Bottom separator.
+    let _ = execute!(
+        stdout(),
+        Print("\n"),
+        SetForegroundColor(Color::Rgb { r: 45, g: 50, b: 62 }),
+        Print(format!("  {sep}\n")),
+        ResetColor,
+        Print("\n"),
+    );
 }
 
 /// Print a condensed replay of a session's conversation for context on resume.

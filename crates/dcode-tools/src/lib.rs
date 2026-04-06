@@ -182,7 +182,7 @@ pub async fn dispatch(name: &str, args: &serde_json::Value, cwd: &Path) -> anyho
                 path,
                 start_line: args["start_line"].as_u64().map(|n| n as usize),
                 end_line: args["end_line"].as_u64().map(|n| n as usize),
-            })?;
+            }).await?;
             // Large file reads: save to disk and return preview with hint.
             Ok(truncate::maybe_offload(result, name, cwd))
         }
