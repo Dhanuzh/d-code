@@ -231,9 +231,33 @@ impl Agent {
             }
 
             // ── Execute tool calls ──────────────────────────────────────────────
+            // Interactive tools (ask_user, bash with confirmation) run sequentially.
+            // Pure read-only tools (read_file, glob, grep, list_dir, read_image) run
+            // in parallel to eliminate round-trip latency when the model batches them.
             let mut tool_results: Vec<ContentBlock> = vec![];
-            for tc in &tool_calls {
-                // ── ask_user: pause and get user input ───────────────────────────
+
+            // Partition: interactive vs parallelisable.
+            let is_parallel_safe = |name: &str| {
+                matches!(name, "read_file" | "glob" | "grep" | "list_dir" | "read_image")
+            };
+
+            // Handle interactive tools sequentially first, preserving order via index.
+            let mut parallel_indices: Vec<usize> = vec![];
+            let placeholder = ContentBlock::ToolResult {
+                tool_use_id: String::new(),
+                content: String::new(),
+                is_error: false,
+            };
+            // Pre-fill results vec with placeholders; fill in order below.
+            tool_results.resize(tool_calls.len(), placeholder);
+
+            for (i, tc) in tool_calls.iter().enumerate() {
+                if is_parallel_safe(&tc.name) {
+                    parallel_indices.push(i);
+                    continue; // deferred
+                }
+
+                // ask_user
                 if tc.name == "ask_user" {
                     let question = tc.input["question"].as_str().unwrap_or("?");
                     let choices: Vec<String> = tc.input["choices"]
@@ -249,19 +273,19 @@ impl Agent {
                     } else {
                         "[User unavailable]".to_string()
                     };
-                    tool_results.push(ContentBlock::ToolResult {
+                    tool_results[i] = ContentBlock::ToolResult {
                         tool_use_id: tc.id.clone(),
                         content: answer,
                         is_error: false,
-                    });
+                    };
                     continue;
                 }
 
-                // ── Dangerous bash: confirm before running ────────────────────────
+                // bash (possibly interactive)
                 if tc.name == "bash" {
                     let cmd = tc.input["command"].as_str().unwrap_or("");
                     let danger = is_dangerous_bash(cmd);
-                    let confirm_all = self.bash_approver.is_some() && !danger; // all-bash mode
+                    let confirm_all = self.bash_approver.is_some() && !danger;
                     if danger || confirm_all {
                         on_event(AgentEvent::ConfirmBash { command: cmd.to_string() });
                         if let Some(ref approver) = self.bash_approver {
@@ -272,11 +296,11 @@ impl Agent {
                                     result: "[blocked by user]".to_string(),
                                     is_error: false,
                                 });
-                                tool_results.push(ContentBlock::ToolResult {
+                                tool_results[i] = ContentBlock::ToolResult {
                                     tool_use_id: tc.id.clone(),
                                     content: "[Command blocked: user denied execution. Try a different approach.]".to_string(),
                                     is_error: false,
-                                });
+                                };
                                 continue;
                             }
                         }
@@ -293,11 +317,43 @@ impl Agent {
                     result: result.clone(),
                     is_error,
                 });
-                tool_results.push(ContentBlock::ToolResult {
+                tool_results[i] = ContentBlock::ToolResult {
                     tool_use_id: tc.id.clone(),
                     content: compact_tool_result(&result),
                     is_error,
-                });
+                };
+            }
+
+            // Run parallel-safe tools concurrently.
+            if !parallel_indices.is_empty() {
+                let futures: Vec<_> = parallel_indices.iter().map(|&i| {
+                    let tc = &tool_calls[i];
+                    let name = tc.name.clone();
+                    let input = tc.input.clone();
+                    let cwd = self.cwd.clone();
+                    async move {
+                        let (result, is_error) = match dcode_tools::dispatch(&name, &input, &cwd).await {
+                            Ok(r) => (r, false),
+                            Err(e) => (format!("Error: {e}"), true),
+                        };
+                        (i, name, input, result, is_error)
+                    }
+                }).collect();
+
+                let outcomes = futures::future::join_all(futures).await;
+                for (i, name, input, result, is_error) in outcomes {
+                    on_event(AgentEvent::ToolDone {
+                        name,
+                        input,
+                        result: result.clone(),
+                        is_error,
+                    });
+                    tool_results[i] = ContentBlock::ToolResult {
+                        tool_use_id: tool_calls[i].id.clone(),
+                        content: compact_tool_result(&result),
+                        is_error,
+                    };
+                }
             }
 
             // Add tool results as user message.

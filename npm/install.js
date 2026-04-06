@@ -19,8 +19,7 @@ const path = require("path");
 const os = require("os");
 const { execSync } = require("child_process");
 
-const VERSION = require("./package.json").version;
-const REPO = "ddhanush1/d-code";
+const REPO = "Dhanuzh/d-code";
 
 const TARGETS = {
   "linux-x64": "x86_64-unknown-linux-musl",
@@ -45,18 +44,19 @@ if (!target) {
 }
 
 const isWindows = platform === "win32";
-// Use "d-code-bin" on unix so it doesn't conflict with the JS shim named "d-code".
 const binaryName = isWindows ? "d-code.exe" : "d-code";
-const installedName = isWindows ? "d-code.exe" : "d-code-bin";
 const archiveName = isWindows
   ? `d-code-${target}.zip`
   : `d-code-${target}.tar.gz`;
-const downloadUrl = `https://github.com/${REPO}/releases/download/v${VERSION}/${archiveName}`;
+// Always use latest release — no need to keep npm version in sync with GitHub releases.
+const downloadUrl = `https://github.com/${REPO}/releases/latest/download/${archiveName}`;
 const binDir = path.join(__dirname, "bin");
-const binaryPath = path.join(binDir, installedName);
+// Binary is saved as "d-code" (overwrites the JS placeholder shim).
+// The npm symlink already points here, so it works automatically after install.
+const binaryPath = path.join(binDir, binaryName);
 
-// If binary already exists (e.g. in CI or re-install), skip download.
-if (fs.existsSync(binaryPath)) {
+// If already a real binary (> 100KB), skip download.
+if (fs.existsSync(binaryPath) && fs.statSync(binaryPath).size > 100_000) {
   try {
     fs.chmodSync(binaryPath, 0o755);
   } catch (_) {}
@@ -71,11 +71,6 @@ console.log(`         ${downloadUrl}`);
 
 downloadAndExtract(downloadUrl, archiveName, binaryName, binaryPath)
   .then(() => {
-    // Rename extracted binary to installedName if different.
-    const extractedPath = path.join(binDir, binaryName);
-    if (extractedPath !== binaryPath && fs.existsSync(extractedPath)) {
-      fs.renameSync(extractedPath, binaryPath);
-    }
     fs.chmodSync(binaryPath, 0o755);
     console.log(`[d-code] Installed to ${binaryPath}`);
   })
