@@ -1,0 +1,9 @@
+[package]
+name    = "dcode-tui"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+crossterm = "0.28"
+unicode-width = "0.2"
+serde_json = "1"

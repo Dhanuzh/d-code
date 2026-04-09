@@ -4,6 +4,7 @@ members = [
     "crates/dcode-providers",
     "crates/dcode-tools",
     "crates/dcode-agent",
+    "crates/dcode-tui",
     "crates/dcode-cli",
 ]
 

@@ -383,7 +383,9 @@ impl Provider for CopilotProvider {
 
     async fn list_models(&self) -> Vec<String> {
         #[derive(serde::Deserialize)]
-        struct ModelObj { id: String }
+        struct Capabilities { #[serde(rename = "type")] kind: Option<String> }
+        #[derive(serde::Deserialize)]
+        struct ModelObj { id: String, capabilities: Option<Capabilities> }
         #[derive(serde::Deserialize)]
         struct ModelList { data: Vec<ModelObj> }
 
@@ -401,7 +403,17 @@ impl Provider for CopilotProvider {
         let Ok(list) = resp.json::<ModelList>().await else {
             return SUPPORTED_MODELS.iter().map(|s| s.to_string()).collect();
         };
-        let mut ids: Vec<String> = list.data.into_iter().map(|m| m.id).collect();
+        // Only include models that support chat completions (capabilities.type == "chat").
+        // Models like gpt-5.3-codex are "completions"-only and fail on /chat/completions.
+        let mut ids: Vec<String> = list.data.into_iter()
+            .filter(|m| {
+                m.capabilities.as_ref()
+                    .and_then(|c| c.kind.as_deref())
+                    .map(|k| k == "chat")
+                    .unwrap_or(true) // include if no capability info (conservative)
+            })
+            .map(|m| m.id)
+            .collect();
         ids.sort();
         if ids.is_empty() { SUPPORTED_MODELS.iter().map(|s| s.to_string()).collect() } else { ids }
     }

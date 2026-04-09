@@ -1,10 +1,6 @@
 /// Interactive REPL using a custom raw-mode line editor.
 use std::io::Write;
 use std::path::PathBuf;
-use std::sync::{
-    atomic::{AtomicBool, Ordering},
-    Arc,
-};
 
 /// Human-readable relative time for a UTC RFC3339 timestamp.
 fn time_ago(rfc3339: &str) -> String {
@@ -24,6 +20,8 @@ fn time_ago(rfc3339: &str) -> String {
 
 use dcode_agent::{Agent, AgentEvent};
 use dcode_providers::load_provider_with_model;
+use dcode_tui::{AssistantMessage, Component, Spinner, StatusBar, ToolExecution, Tui};
+use dcode_tui::summarize_input;
 
 use crate::{
     commands,
@@ -33,66 +31,7 @@ use crate::{
 
 // ─── Thinking spinner ─────────────────────────────────────────────────────────
 
-struct Spinner {
-    running: Arc<AtomicBool>,
-    handle: tokio::task::JoinHandle<()>,
-}
-
-impl Spinner {
-    fn start() -> Self {
-        let running = Arc::new(AtomicBool::new(true));
-        let flag = Arc::clone(&running);
-        let handle = tokio::spawn(async move {
-            // Braille frames for smooth spinner animation.
-            let frames = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
-            // Shimmer: pulse through teal (C_ACCENT = #8abeb7) brightness levels.
-            let shimmer: &[(u8, u8, u8)] = &[
-                (60, 110, 105),
-                (75, 135, 130),
-                (95, 155, 150),
-                (115, 170, 165),
-                (130, 182, 178),
-                (138, 190, 183),  // peak — #8abeb7
-                (128, 180, 173),
-                (108, 165, 158),
-                (88, 148, 142),
-                (70, 128, 122),
-            ];
-            let start = std::time::Instant::now();
-            let mut i = 0usize;
-            loop {
-                if !flag.load(Ordering::Relaxed) {
-                    break;
-                }
-                let secs = start.elapsed().as_secs_f32();
-                let elapsed = if secs < 10.0 {
-                    format!("{:.1}s", secs)
-                } else {
-                    format!("{:.0}s", secs)
-                };
-                let (sr, sg, sb) = shimmer[i % shimmer.len()];
-                // spinner in teal shimmer · "thinking" in muted · elapsed in dim
-                print!("\r  \x1b[38;2;{sr};{sg};{sb}m{}\x1b[0m \x1b[38;2;128;128;128mthinking\x1b[0m  \x1b[38;2;102;102;102m{elapsed}\x1b[0m",
-                    frames[i % frames.len()]);
-                let _ = std::io::stdout().flush();
-                tokio::time::sleep(std::time::Duration::from_millis(80)).await;
-                i += 1;
-            }
-        });
-        Self { running, handle }
-    }
-
-    fn stop(self) {
-        self.running.store(false, Ordering::Relaxed);
-        self.handle.abort();
-        print!("\r");
-        let _ = crossterm::execute!(
-            std::io::stdout(),
-            crossterm::terminal::Clear(crossterm::terminal::ClearType::CurrentLine)
-        );
-        let _ = std::io::stdout().flush();
-    }
-}
+// Old thread-based Spinner replaced by dcode_tui::Spinner component.
 
 /// Slash-command tab-completion candidates.
 fn slash_completions() -> Vec<String> {
@@ -259,41 +198,9 @@ pub async fn run(cwd: PathBuf, provider_name: Option<String>) -> anyhow::Result<
                         let expanded = expanded.trim().to_string();
                         if !expanded.is_empty() {
                             render::print_info(&format!("  Template expanded ({} chars)", expanded.len()));
-                            // Re-dispatch as a regular user message (no command handling).
                             let expanded_input = expand_at_mentions(&expanded, &cwd);
                             println!();
-                            let mut md = render::MarkdownRenderer::new();
-                            let mut xml_filter = render::XmlFilter::new();
-                            let spinner = Spinner::start();
-                            let mut spinner_opt = Some(spinner);
-                            let mut tool_start_map: std::collections::HashMap<String, std::time::Instant> = std::collections::HashMap::new();
-                            let mut turn_divider_shown = false;
-                            let _ = agent.run_turn(&expanded_input, |ev| match ev {
-                                AgentEvent::TextDelta(t) => {
-                                    if let Some(sp) = spinner_opt.take() { sp.stop(); }
-                                    if !turn_divider_shown { turn_divider_shown = true; render::print_turn_divider(); }
-                                    let clean = xml_filter.push(&t);
-                                    if !clean.is_empty() { md.push(&clean); }
-                                }
-                                AgentEvent::ToolStart { name } => {
-                                    if let Some(sp) = spinner_opt.take() { sp.stop(); }
-                                    let leftover = xml_filter.flush(); if !leftover.is_empty() { md.push(&leftover); } md.flush();
-                                    tool_start_map.insert(name.clone(), std::time::Instant::now());
-                                    render::print_tool_start(&name);
-                                }
-                                AgentEvent::ToolDone { name, input: ti, result, is_error } => {
-                                    let elapsed_ms = tool_start_map.remove(&name).map(|t| t.elapsed().as_millis() as u64).unwrap_or(0);
-                                    render::print_tool_done(&name, &ti, &result, is_error, elapsed_ms);
-                                    spinner_opt = Some(Spinner::start());
-                                }
-                                AgentEvent::TokenUsage { .. } => {}
-                                AgentEvent::UserQuestion { .. } | AgentEvent::ConfirmBash { .. } => { if let Some(sp) = spinner_opt.take() { sp.stop(); } }
-                                AgentEvent::DoomLoop { tool } => { if let Some(sp) = spinner_opt.take() { sp.stop(); } render::print_error(&format!("Doom loop: '{tool}' called 3× with same args. Stopping.")); }
-                                AgentEvent::TurnDone => {
-                                    if let Some(sp) = spinner_opt.take() { sp.stop(); }
-                                    let leftover = xml_filter.flush(); if !leftover.is_empty() { md.push(&leftover); } md.flush(); println!();
-                                }
-                            }).await;
+                            run_turn_with_tui(&mut agent, &expanded_input).await;
                             render::print_turn_footer(
                                 agent.session.total_input_tokens,
                                 agent.session.total_output_tokens,
@@ -786,91 +693,7 @@ pub async fn run(cwd: PathBuf, provider_name: Option<String>) -> anyhow::Result<
                 let input = expand_at_mentions(&input, &cwd);
 
                 println!();
-                let mut md = render::MarkdownRenderer::new();
-                let mut xml_filter = render::XmlFilter::new();
-                let spinner = Spinner::start();
-                let mut spinner_opt = Some(spinner);
-                let mut tool_start: std::collections::HashMap<String, std::time::Instant> =
-                    std::collections::HashMap::new();
-
-                let mut turn_divider_shown = false;
-                if let Err(e) = agent
-                    .run_turn(&input, |ev| match ev {
-                        AgentEvent::TextDelta(t) => {
-                            if let Some(sp) = spinner_opt.take() {
-                                sp.stop();
-                            }
-                            if !turn_divider_shown {
-                                turn_divider_shown = true;
-                                render::print_turn_divider();
-                            }
-                            let clean = xml_filter.push(&t);
-                            if !clean.is_empty() {
-                                md.push(&clean);
-                            }
-                        }
-                        AgentEvent::ToolStart { name } => {
-                            if let Some(sp) = spinner_opt.take() {
-                                sp.stop();
-                            }
-                            let leftover = xml_filter.flush();
-                            if !leftover.is_empty() {
-                                md.push(&leftover);
-                            }
-                            md.flush();
-                            tool_start.insert(name.clone(), std::time::Instant::now());
-                            render::print_tool_start(&name);
-                        }
-                        AgentEvent::ToolDone {
-                            name,
-                            input,
-                            result,
-                            is_error,
-                        } => {
-                            let elapsed_ms = tool_start.remove(&name)
-                                .map(|t| t.elapsed().as_millis() as u64)
-                                .unwrap_or(0);
-                            render::print_tool_done(&name, &input, &result, is_error, elapsed_ms);
-                            // Show spinner again while waiting for next chunk.
-                            spinner_opt = Some(Spinner::start());
-                        }
-                        AgentEvent::TokenUsage { .. } => {}
-                        AgentEvent::UserQuestion { .. } => {
-                            // Handled synchronously by user_prompter before this event fires.
-                            // Event is informational only.
-                            if let Some(sp) = spinner_opt.take() { sp.stop(); }
-                        }
-                        AgentEvent::ConfirmBash { .. } => {
-                            // bash_approver runs synchronously; this event is informational.
-                            if let Some(sp) = spinner_opt.take() { sp.stop(); }
-                        }
-                        AgentEvent::DoomLoop { tool } => {
-                            if let Some(sp) = spinner_opt.take() {
-                                sp.stop();
-                            }
-                            render::print_error(&format!(
-                                "Doom loop: '{tool}' called 3× with same args. Stopping."
-                            ));
-                        }
-                        AgentEvent::TurnDone => {
-                            if let Some(sp) = spinner_opt.take() {
-                                sp.stop();
-                            }
-                            let leftover = xml_filter.flush();
-                            if !leftover.is_empty() {
-                                md.push(&leftover);
-                            }
-                            md.flush();
-                            println!();
-                        }
-                    })
-                    .await
-                {
-                    if let Some(sp) = spinner_opt.take() {
-                        sp.stop();
-                    }
-                    render::print_error(&friendly_error(&format!("{e:#}")));
-                }
+                run_turn_with_tui(&mut agent, &input).await;
 
                 // Post-turn footer: token counts, cost, context %.
                 render::print_turn_footer(
@@ -948,6 +771,104 @@ async fn run_bash_inline(cmd: &str, add_to_context: bool, agent: &mut dcode_agen
             }
         }
         Err(e) => render::print_error(&format!("{e}")),
+    }
+}
+
+// ─── TUI-driven turn ──────────────────────────────────────────────────────────
+
+/// Run one agent turn using the dcode-tui differential renderer.
+///
+/// Uses concrete component types directly (no trait object downcasting).
+/// The Tui engine is used purely as a diff renderer via `render_lines_throttled`.
+async fn run_turn_with_tui(agent: &mut dcode_agent::Agent, input: &str) {
+    let mut tui = Tui::new();
+    let mut xml_filter = render::XmlFilter::new();
+    let width = crossterm::terminal::size().map(|(w, _)| w).unwrap_or(80);
+
+    // Concrete component state — no downcasting needed.
+    let mut spinner: Option<Spinner> = Some(Spinner::new());
+    let mut assistant: Option<AssistantMessage> = None;
+    let mut completed_tools: Vec<ToolExecution> = Vec::new();
+    let mut active_tool: Option<ToolExecution> = None;
+
+    // Helper macro to collect rendered lines from all current components.
+    macro_rules! render_state {
+        () => {{
+            let mut _lines: Vec<String> = Vec::new();
+            if let Some(sp) = spinner.as_mut() {
+                for mut l in sp.render(width) { _lines.push(l.render().to_string()); }
+            }
+            for tool in completed_tools.iter_mut() {
+                for mut l in tool.render(width) { _lines.push(l.render().to_string()); }
+            }
+            if let Some(tool) = active_tool.as_mut() {
+                for mut l in tool.render(width) { _lines.push(l.render().to_string()); }
+            }
+            if let Some(msg) = assistant.as_mut() {
+                for mut l in msg.render(width) { _lines.push(l.render().to_string()); }
+            }
+            _lines
+        }};
+    }
+
+    let result = agent.run_turn(input, |ev| {
+        match ev {
+            AgentEvent::TextDelta(t) => {
+                spinner.take();
+                let clean = xml_filter.push(&t);
+                if !clean.is_empty() {
+                    assistant.get_or_insert_with(AssistantMessage::new).push(&clean);
+                }
+                tui.render_lines_throttled(render_state!());
+            }
+            AgentEvent::ToolStart { name } => {
+                spinner.take();
+                if let Some(ref mut asst) = assistant {
+                    let leftover = xml_filter.flush();
+                    if !leftover.is_empty() { asst.push(&leftover); }
+                    asst.finalize();
+                }
+                active_tool = Some(ToolExecution::new(&name));
+                tui.render_lines_throttled(render_state!());
+            }
+            AgentEvent::ToolDone { name, input: ti, result, is_error } => {
+                if let Some(mut tool) = active_tool.take() {
+                    let summary = summarize_input(&name, &ti);
+                    tool.finish(&result, is_error, summary);
+                    completed_tools.push(tool);
+                }
+                assistant = None;
+                spinner = Some(Spinner::new());
+                tui.render_lines_throttled(render_state!());
+            }
+            AgentEvent::TokenUsage { .. } => {}
+            AgentEvent::UserQuestion { .. } | AgentEvent::ConfirmBash { .. } => {
+                tui.render_lines(render_state!());
+                tui.commit();
+            }
+            AgentEvent::DoomLoop { tool } => {
+                tui.commit();
+                render::print_error(&format!(
+                    "Doom loop: '{tool}' called 3× with same args. Stopping."
+                ));
+            }
+            AgentEvent::TurnDone => {
+                spinner.take();
+                let leftover = xml_filter.flush();
+                if !leftover.is_empty() {
+                    assistant.get_or_insert_with(AssistantMessage::new).push(&leftover);
+                }
+                if let Some(ref mut asst) = assistant { asst.finalize(); }
+                tui.render_lines(render_state!());
+                tui.commit();
+                println!();
+            }
+        }
+    }).await;
+
+    if let Err(e) = result {
+        tui.commit();
+        render::print_error(&friendly_error(&format!("{e:#}")));
     }
 }
 

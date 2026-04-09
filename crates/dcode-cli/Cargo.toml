@@ -19,6 +19,7 @@ dirs.workspace        = true
 dcode-providers = { path = "../dcode-providers" }
 dcode-tools     = { path = "../dcode-tools" }
 dcode-agent     = { path = "../dcode-agent" }
+dcode-tui       = { path = "../dcode-tui" }
 
 clap      = { version = "4", features = ["derive", "color"] }
 crossterm = "0.28"
