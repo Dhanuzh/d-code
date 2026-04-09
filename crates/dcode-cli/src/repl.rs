@@ -20,7 +20,7 @@ fn time_ago(rfc3339: &str) -> String {
 
 use dcode_agent::{Agent, AgentEvent};
 use dcode_providers::load_provider_with_model;
-use dcode_tui::{AssistantMessage, Component, Spinner, StatusBar, ToolExecution, Tui, UserMessage};
+use dcode_tui::{AssistantMessage, Component, Spinner, ToolExecution, Tui};
 use dcode_tui::summarize_input;
 
 use crate::{
@@ -773,8 +773,6 @@ async fn run_turn_with_tui(agent: &mut dcode_agent::Agent, input: &str) {
     let mut xml_filter = render::XmlFilter::new();
     let width = crossterm::terminal::size().map(|(w, _)| w).unwrap_or(80);
 
-    // Show user message immediately (pi-mono style: user msg with bg color)
-    let mut user_msg = UserMessage::new(input);
     let mut spinner: Option<Spinner> = Some(Spinner::new());
     let mut assistant: Option<AssistantMessage> = None;
     let mut completed_tools: Vec<ToolExecution> = Vec::new();
@@ -786,9 +784,6 @@ async fn run_turn_with_tui(agent: &mut dcode_agent::Agent, input: &str) {
     macro_rules! render_state {
         () => {{
             let mut _lines: Vec<String> = Vec::new();
-            // User message (always shown)
-            for mut l in user_msg.render(width) { _lines.push(l.render().to_string()); }
-            // Spinner or tools+assistant
             if let Some(sp) = spinner.as_mut() {
                 for mut l in sp.render(width) { _lines.push(l.render().to_string()); }
             }

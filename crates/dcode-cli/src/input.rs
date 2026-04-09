@@ -840,18 +840,18 @@ impl LineEditor {
 
     fn finalize(&self, sess: &mut Session, out: &mut impl Write) -> io::Result<()> {
         self.erase(sess, out)?;
-        // Print prompt + submitted text (newlines shown as ↵).
+        // Print user message in pi-mono style: dark background, full-width highlight.
+        let text = sess.text.replace('\n', " ↵ ");
+        let term_width = crossterm::terminal::size().map(|(w, _)| w as usize).unwrap_or(80);
+        // Pad to terminal width for full-width background effect.
+        let visible_len = text.chars().count() + 1; // +1 for leading space
+        let padding = if visible_len < term_width { " ".repeat(term_width - visible_len) } else { String::new() };
         execute!(
             out,
-            SetForegroundColor(Color::Rgb { r: 138, g: 190, b: 183 }),
-            SetAttribute(Attribute::Bold),
-            Print(&self.prompt),
-            ResetColor,
-            SetAttribute(Attribute::Reset),
-            SetForegroundColor(Color::Rgb { r: 212, g: 215, b: 222 }),
-            Print(sess.text.replace('\n', " ↵ ")),
-            ResetColor,
-            Print("\r\n"),
+            // Dark blue-grey background (userMessageBg), light text
+            Print("\x1b[48;2;40;44;56m\x1b[38;2;200;210;240m"),
+            Print(format!(" {text}{padding}")),
+            Print("\x1b[0m\r\n"),
         )?;
         out.flush()
     }
