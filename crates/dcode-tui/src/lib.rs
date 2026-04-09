@@ -34,5 +34,6 @@ pub use components::{
     Spinner,
     StatusBar,
     InputBar,
+    UserMessage,
 };
 pub use components::tool_execution::summarize_input;

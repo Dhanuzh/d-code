@@ -20,7 +20,7 @@ fn time_ago(rfc3339: &str) -> String {
 
 use dcode_agent::{Agent, AgentEvent};
 use dcode_providers::load_provider_with_model;
-use dcode_tui::{AssistantMessage, Component, Spinner, StatusBar, ToolExecution, Tui};
+use dcode_tui::{AssistantMessage, Component, Spinner, StatusBar, ToolExecution, Tui, UserMessage};
 use dcode_tui::summarize_input;
 
 use crate::{
@@ -692,17 +692,7 @@ pub async fn run(cwd: PathBuf, provider_name: Option<String>) -> anyhow::Result<
                 // Expand @file mentions before sending to agent.
                 let input = expand_at_mentions(&input, &cwd);
 
-                println!();
                 run_turn_with_tui(&mut agent, &input).await;
-
-                // Post-turn footer: token counts, cost, context %.
-                render::print_turn_footer(
-                    agent.session.total_input_tokens,
-                    agent.session.total_output_tokens,
-                    agent.model_name(),
-                    agent.provider_context_window(),
-                    agent.session.estimated_tokens() as u32,
-                );
 
                 // Live-save after each turn.
                 if !agent.session.messages.is_empty() {
@@ -777,24 +767,28 @@ async fn run_bash_inline(cmd: &str, add_to_context: bool, agent: &mut dcode_agen
 // ─── TUI-driven turn ──────────────────────────────────────────────────────────
 
 /// Run one agent turn using the dcode-tui differential renderer.
-///
-/// Uses concrete component types directly (no trait object downcasting).
-/// The Tui engine is used purely as a diff renderer via `render_lines_throttled`.
+/// Layout mirrors pi-mono: UserMessage → spinner/tools → AssistantMessage → StatusBar footer.
 async fn run_turn_with_tui(agent: &mut dcode_agent::Agent, input: &str) {
     let mut tui = Tui::new();
     let mut xml_filter = render::XmlFilter::new();
     let width = crossterm::terminal::size().map(|(w, _)| w).unwrap_or(80);
 
-    // Concrete component state — no downcasting needed.
+    // Show user message immediately (pi-mono style: user msg with bg color)
+    let mut user_msg = UserMessage::new(input);
     let mut spinner: Option<Spinner> = Some(Spinner::new());
     let mut assistant: Option<AssistantMessage> = None;
     let mut completed_tools: Vec<ToolExecution> = Vec::new();
     let mut active_tool: Option<ToolExecution> = None;
+    // Token tracking for status bar
+    let mut total_in = 0u32;
+    let mut total_out = 0u32;
 
-    // Helper macro to collect rendered lines from all current components.
     macro_rules! render_state {
         () => {{
             let mut _lines: Vec<String> = Vec::new();
+            // User message (always shown)
+            for mut l in user_msg.render(width) { _lines.push(l.render().to_string()); }
+            // Spinner or tools+assistant
             if let Some(sp) = spinner.as_mut() {
                 for mut l in sp.render(width) { _lines.push(l.render().to_string()); }
             }
@@ -810,6 +804,12 @@ async fn run_turn_with_tui(agent: &mut dcode_agent::Agent, input: &str) {
             _lines
         }};
     }
+
+    // Initial render: show user message + spinner
+    tui.render_lines(render_state!());
+
+    let model_name = agent.model_name().to_string();
+    let ctx_window = agent.provider_context_window();
 
     let result = agent.run_turn(input, |ev| {
         match ev {
@@ -841,7 +841,10 @@ async fn run_turn_with_tui(agent: &mut dcode_agent::Agent, input: &str) {
                 spinner = Some(Spinner::new());
                 tui.render_lines_throttled(render_state!());
             }
-            AgentEvent::TokenUsage { .. } => {}
+            AgentEvent::TokenUsage { input, output } => {
+                total_in += input;
+                total_out += output;
+            }
             AgentEvent::UserQuestion { .. } | AgentEvent::ConfirmBash { .. } => {
                 tui.render_lines(render_state!());
                 tui.commit();
@@ -861,7 +864,6 @@ async fn run_turn_with_tui(agent: &mut dcode_agent::Agent, input: &str) {
                 if let Some(ref mut asst) = assistant { asst.finalize(); }
                 tui.render_lines(render_state!());
                 tui.commit();
-                println!();
             }
         }
     }).await;
@@ -869,7 +871,13 @@ async fn run_turn_with_tui(agent: &mut dcode_agent::Agent, input: &str) {
     if let Err(e) = result {
         tui.commit();
         render::print_error(&friendly_error(&format!("{e:#}")));
+        return;
     }
+
+    // Footer: token counts, cost, context% — mirrors pi-mono footer.ts
+    let ctx_used = agent.session.estimated_tokens() as u32;
+    render::print_turn_footer(total_in, total_out, &model_name, ctx_window, ctx_used);
+    println!();
 }
 
 // ─── Model cycling ────────────────────────────────────────────────────────────
