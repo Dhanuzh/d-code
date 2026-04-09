@@ -50,6 +50,9 @@ pub struct Agent {
     default_max_tokens: u32,
     /// Maximum tool call iterations per turn (prevents infinite loops).
     max_iterations: u32,
+    /// Cached system prompt — built once at construction, reused every turn.
+    /// Avoids re-reading project files from disk on every API call.
+    cached_system_prompt: String,
     /// Called before executing a dangerous bash command. Return false to block it.
     /// If None, all commands execute without confirmation (dangerous ones still warned via event).
     pub bash_approver: Option<Box<dyn Fn(&str) -> bool + Send + Sync>>,
@@ -61,16 +64,24 @@ impl Agent {
     pub fn new(provider: BoxProvider, cwd: PathBuf) -> Self {
         // 4096 is plenty for most tasks; pick_max_tokens raises it for heavy requests.
         let default_max_tokens = 4_096;
+        // Build system prompt once — avoid disk I/O on every turn.
+        let cached_system_prompt = prompt::build_system_prompt(&cwd);
         Self {
             tools: builtin_tools(),
             provider,
             session: Session::new(),
             cwd,
             default_max_tokens,
-            max_iterations: 12,
+            max_iterations: 10,
+            cached_system_prompt,
             bash_approver: None,
             user_prompter: None,
         }
+    }
+
+    /// Rebuild the system prompt (e.g. after skills change or project context updates).
+    pub fn refresh_system_prompt(&mut self) {
+        self.cached_system_prompt = prompt::build_system_prompt(&self.cwd);
     }
 
     pub fn provider_info(&self) -> String {
@@ -106,10 +117,10 @@ impl Agent {
         compact::maybe_compact(
             &mut self.session.messages,
             self.provider.context_window(),
-            6,
+            8, // keep 8 most-recent messages (≈2 full tool turns) verbatim in summary
         );
 
-        let system = prompt::build_system_prompt(&self.cwd);
+        let system = &self.cached_system_prompt;
         let tools_for_turn: &[ToolDef] = if should_enable_tools(user_input) {
             &self.tools
         } else {
@@ -451,13 +462,15 @@ impl Agent {
             );
         }
 
-        // After the turn: stub out image data URIs everywhere — the model already
-        // saw and responded to them; keeping MB of base64 in context is wasteful.
+        // After the turn: stub out image data URIs — the model already responded
+        // to them; keeping MB of base64 in context wastes tokens every request.
         stub_image_tool_results(&mut self.session.messages);
 
-        // Trim stale text tool-result content in older messages.
-        // Keep the last 8 messages (4 full turns) intact; older messages get stubs.
-        trim_old_tool_results(&mut self.session.messages, 8);
+        // Trim stale tool-result content in older messages.
+        // Keep the last 6 messages (≈1-2 turns) fully intact; older ones get a
+        // short stub. This aggressively limits history size without losing context
+        // the model currently needs.
+        trim_old_tool_results(&mut self.session.messages, 6);
 
         on_event(AgentEvent::TurnDone);
         Ok(())
@@ -538,7 +551,7 @@ fn stub_image_tool_results(messages: &mut Vec<Message>) {
 /// Keeps only the last `keep_recent` messages untouched.
 /// Images (data URIs) in old messages are replaced with a short stub to save context.
 fn trim_old_tool_results(messages: &mut Vec<Message>, keep_recent: usize) {
-    const STUB_MAX: usize = 120;
+    const STUB_MAX: usize = 200; // enough context to understand what ran
     let len = messages.len();
     let trim_up_to = len.saturating_sub(keep_recent);
     for msg in messages[..trim_up_to].iter_mut() {
@@ -557,23 +570,27 @@ fn trim_old_tool_results(messages: &mut Vec<Message>, keep_recent: usize) {
     }
 }
 
-/// Per-tool maximum inline result size (chars) kept in message history.
-/// Smaller for tools whose output the model rarely needs verbatim later.
+/// Per-tool maximum inline result size (chars) stored in message history.
+///
+/// Kept intentionally lean — large tool results are the #1 driver of context
+/// growth and credit burn. The model rarely needs the full verbatim output of
+/// old turns; only the current turn's results need to be complete.
 fn tool_result_limit(name: &str) -> usize {
     match name {
-        // File writes/edits return short confirmation — no truncation needed.
-        "write_file" | "edit_file" => 500,
-        // grep/glob can be large but model only needs key lines.
-        "grep" | "glob" | "list_dir" => 8_000,
-        // Bash output: keep a generous window for build/test logs.
-        "bash" | "run_command" => 10_000,
-        // Web content can be very large; 6k keeps a full article section.
-        "web_fetch" | "web_search" => 6_000,
-        // read_file: keep more — model uses this for precise edits.
-        "read_file" => 14_000,
+        // Write/edit: short confirmation only.
+        "write_file" | "edit_file" => 400,
+        // grep/glob/list: model needs enough to orient itself, not everything.
+        "grep" | "glob" | "list_dir" => 3_000,
+        // Bash: keep tail of output (errors, build results). 4k ≈ 100 lines.
+        "bash" | "run_command" => 4_000,
+        // Web: first ~3k chars of a page is usually enough for context.
+        "web_fetch" | "web_search" => 3_000,
+        // read_file: 6k ≈ ~200 lines — enough for most code files.
+        // Use grep+start_line/end_line for larger files.
+        "read_file" => 6_000,
         // Images stay intact (base64 must not be truncated).
         "read_image" => usize::MAX,
-        _ => 12_000,
+        _ => 4_000,
     }
 }
 

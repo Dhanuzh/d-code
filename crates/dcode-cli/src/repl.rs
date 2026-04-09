@@ -62,20 +62,22 @@ fn slash_completions() -> Vec<String> {
 
 pub async fn run(cwd: PathBuf, provider_name: Option<String>) -> anyhow::Result<()> {
     // Load saved model preference.
-    let (init_provider, init_model) = if provider_name.is_some() {
-        (provider_name.as_deref(), None)
+    // `needs_model_pick` = true when the user has never chosen a model — we'll
+    // show the interactive picker right after the welcome banner.
+    let (init_provider, init_model, needs_model_pick) = if provider_name.is_some() {
+        (provider_name.as_deref(), None, false)
     } else {
         match load_saved_model() {
             Some(saved) => {
                 if let Some((p, m)) = saved.split_once('/') {
                     let p = Box::leak(p.to_string().into_boxed_str());
                     let m = Box::leak(m.to_string().into_boxed_str());
-                    (Some(p as &str), Some(m as &str))
+                    (Some(p as &str), Some(m as &str), false)
                 } else {
-                    (provider_name.as_deref(), None)
+                    (provider_name.as_deref(), None, true)
                 }
             }
-            None => (provider_name.as_deref(), None),
+            None => (provider_name.as_deref(), None, true), // first run — ask user
         }
     };
 
@@ -108,6 +110,56 @@ pub async fn run(cwd: PathBuf, provider_name: Option<String>) -> anyhow::Result<
     // Welcome banner with provider status.
     let auth_store = dcode_providers::AuthStore::load().unwrap_or_default();
     render::print_welcome_banner(&provider_info, &auth_store);
+
+    // ── First-run: no saved model → show picker immediately ──────────────────
+    if needs_model_pick {
+        render::print_info("  No model selected. Pick one to get started:");
+        println!();
+        print!("  \x1b[2mFetching models…\x1b[0m");
+        let _ = std::io::stdout().flush();
+
+        let store = dcode_providers::AuthStore::load().unwrap_or_default();
+        let mut labels: Vec<String> = Vec::new();
+        let all_providers = ["anthropic", "copilot", "openai", "gemini", "openrouter"];
+        for p in all_providers {
+            let authenticated = match p {
+                "anthropic"   => store.anthropic.is_some(),
+                "copilot"     => store.copilot.is_some(),
+                "openai"      => store.openai.is_some() || store.openai_oauth.is_some(),
+                "gemini"      => store.gemini.is_some() || std::env::var("GEMINI_API_KEY").is_ok(),
+                "openrouter"  => store.openrouter.is_some() || std::env::var("OPENROUTER_API_KEY").is_ok(),
+                _ => false,
+            };
+            if authenticated {
+                if let Ok(tmp) = load_provider_with_model(Some(p), None) {
+                    for m in tmp.list_models().await {
+                        labels.push(format!("{p}/{m}"));
+                    }
+                }
+            }
+        }
+        print!("\r\x1b[2K");
+        let _ = std::io::stdout().flush();
+
+        if labels.is_empty() {
+            render::print_info("  No providers authenticated. Run `/login` to add one.");
+        } else {
+            while crossterm::event::poll(std::time::Duration::ZERO).unwrap_or(false) {
+                let _ = crossterm::event::read();
+            }
+            if let Some(idx) = render::select_interactive_with_current("Choose model:", &labels, None) {
+                let label = &labels[idx];
+                if let Some((p, m)) = label.split_once('/') {
+                    let new_provider = load_provider_with_model(Some(p), Some(m))?;
+                    provider_info = format!("{}/{}", new_provider.name(), new_provider.model());
+                    agent.replace_provider(new_provider);
+                    agent.refresh_system_prompt();
+                    save_model(&provider_info, &dcode_dir);
+                }
+            }
+            println!();
+        }
+    }
 
     let make_prompt = |info: &str, tokens: Option<u32>, cwd: &std::path::Path| -> String {
         // Branch in amber (256-colour 179) — dim
@@ -667,6 +719,7 @@ pub async fn run(cwd: PathBuf, provider_name: Option<String>) -> anyhow::Result<
                                         let provider = load_provider_with_model(Some(p), Some(m))?;
                                         provider_info = format!("{}/{}", provider.name(), provider.model());
                                         agent.replace_provider(provider);
+                                        agent.refresh_system_prompt();
                                         editor.set_prompt(make_prompt(&provider_info, None, &cwd));
                                         save_model(&provider_info, &dcode_dir);
                                         let fresh_store = dcode_providers::AuthStore::load().unwrap_or_default();

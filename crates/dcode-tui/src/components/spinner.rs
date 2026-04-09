@@ -1,36 +1,26 @@
-//! Spinner component — animated "thinking" indicator.
+//! Spinner component — BorderedLoader style matching pi-mono.
 //!
-//! Unlike the old Spinner (a separate tokio task racing with the renderer),
-//! this is a proper Component that the TUI engine renders on each frame.
-//! No thread races, no stdout contention.
+//! Layout (mirrors bordered-loader.ts):
+//!   ────────────────────────   ← blue DynamicBorder
+//!   ⠋ thinking  1.2s          ← animated spinner + label + elapsed
+//!   ────────────────────────   ← blue DynamicBorder
 
 use std::time::Instant;
 use crate::{Component, Line};
 
-const C_DIM: &str = "\x1b[38;2;102;102;102m";
-const C_MUTED: &str = "\x1b[38;2;128;128;128m";
-const RESET: &str = "\x1b[0m";
-
-// Teal shimmer palette (same as old repl.rs spinner).
-const SHIMMER: &[(u8, u8, u8)] = &[
-    (60,  110, 105),
-    (75,  135, 130),
-    (95,  155, 150),
-    (115, 170, 165),
-    (130, 182, 178),
-    (138, 190, 183), // peak #8abeb7
-    (128, 180, 173),
-    (108, 165, 158),
-    (88,  148, 142),
-    (70,  128, 122),
-];
+// Pi-mono dark theme: border = blue #5f87ff, accent = #8abeb7, muted = #808080, dim = #666666
+const C_BORDER: &str = "\x1b[38;2;95;135;255m";    // blue  (border)
+const C_ACCENT: &str = "\x1b[38;2;138;190;183m";   // teal  (spinner frame)
+const C_MUTED:  &str = "\x1b[38;2;128;128;128m";   // gray  (label)
+const C_DIM:    &str = "\x1b[38;2;102;102;102m";   // dimGray (elapsed)
+const RESET:    &str = "\x1b[0m";
 
 const FRAMES: &[&str] = &["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
 
 /// Animated spinner shown while the agent is thinking.
+/// Rendered as BorderedLoader: border / spinner+label / border.
 pub struct Spinner {
     started_at: Instant,
-    /// Label shown next to spinner (default: "thinking").
     pub label: String,
 }
 
@@ -56,12 +46,17 @@ impl Default for Spinner {
 }
 
 impl Component for Spinner {
-    fn render(&mut self, _width: u16) -> Vec<Line> {
+    fn render(&mut self, width: u16) -> Vec<Line> {
         let ms = self.started_at.elapsed().as_millis() as usize;
-        let frame_idx = ms / 80; // advance frame every 80ms
+        let frame_idx = ms / 80;
         let frame = FRAMES[frame_idx % FRAMES.len()];
-        let (sr, sg, sb) = SHIMMER[frame_idx % SHIMMER.len()];
+        let w = width as usize;
 
+        // DynamicBorder: full-width ─ line in blue.
+        let border: String = std::iter::repeat('─').take(w.saturating_sub(0)).collect();
+        let border_line = format!("{C_BORDER}{border}{RESET}");
+
+        // Elapsed display.
         let secs = self.started_at.elapsed().as_secs_f32();
         let elapsed = if secs < 10.0 {
             format!("{secs:.1}s")
@@ -69,14 +64,19 @@ impl Component for Spinner {
             format!("{secs:.0}s")
         };
 
-        let line = format!(
-            "  \x1b[38;2;{sr};{sg};{sb}m{frame}{RESET} {C_MUTED}{}{RESET}  {C_DIM}{elapsed}{RESET}",
+        // Spinner content line: "  ⠋ thinking  1.2s"
+        let spinner_line = format!(
+            "  {C_ACCENT}{frame}{RESET} {C_MUTED}{}{RESET}  {C_DIM}{elapsed}{RESET}",
             self.label
         );
 
-        vec![Line::raw(line)]
+        vec![
+            Line::raw(border_line.clone()),
+            Line::raw(spinner_line),
+            Line::raw(border_line),
+        ]
     }
 
-    // Spinner is always dirty — it animates every frame.
+    // Spinner always dirty — animates every frame.
     fn is_dirty(&self) -> bool { true }
 }

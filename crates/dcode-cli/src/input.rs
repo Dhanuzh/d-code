@@ -634,15 +634,20 @@ impl LineEditor {
                 SetAttribute(Attribute::Reset),
             )?;
             // Keybinding hints on a new line below (shown only when input is empty).
+            // Pi-mono style: dim key + muted description pairs.
+            const DIM:   &str = "\x1b[38;2;102;102;102m";
+            const MUTED: &str = "\x1b[38;2;128;128;128m";
+            const RST:   &str = "\x1b[0m";
+            let hints = format!(
+                "  {DIM}^C{RST} {MUTED}exit{RST}  {DIM}^G{RST} {MUTED}editor{RST}  \
+                 {DIM}^P/N{RST} {MUTED}model{RST}  {DIM}Shift+↵{RST} {MUTED}newline{RST}  \
+                 {DIM}/{RST} {MUTED}commands{RST}"
+            );
             queue!(
                 out,
                 Print("\r\n"),
                 MoveToColumn(0),
-                SetForegroundColor(Color::Rgb { r: 48, g: 52, b: 64 }),
-                SetAttribute(Attribute::Dim),
-                Print("  ^C exit  ^G editor  ^P/N model  Shift+↵ newline  /help"),
-                ResetColor,
-                SetAttribute(Attribute::Reset),
+                Print(hints),
                 Clear(ClearType::UntilNewLine),
             )?;
         } else {
@@ -848,8 +853,8 @@ impl LineEditor {
         let padding = if visible_len < term_width { " ".repeat(term_width - visible_len) } else { String::new() };
         execute!(
             out,
-            // Dark blue-grey background (userMessageBg), light text
-            Print("\x1b[48;2;40;44;56m\x1b[38;2;200;210;240m"),
+            // userMessageBg #343541 = rgb(52,53,65), default fg (no explicit color = inherit terminal default)
+            Print("\x1b[48;2;52;53;65m"),
             Print(format!(" {text}{padding}")),
             Print("\x1b[0m\r\n"),
         )?;

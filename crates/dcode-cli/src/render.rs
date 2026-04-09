@@ -1151,6 +1151,33 @@ pub fn print_turn_footer(
 ) {
     let w = terminal::size().map(|(w, _)| w as usize).unwrap_or(80);
 
+    // ── Line 1: ~path (branch) ────────────────────────────────────────────────
+    let pwd = std::env::current_dir()
+        .map(|p| p.to_string_lossy().into_owned())
+        .unwrap_or_default();
+    let home = std::env::var("HOME").or_else(|_| std::env::var("USERPROFILE")).unwrap_or_default();
+    let pwd_display = if !home.is_empty() && pwd.starts_with(&home) {
+        format!("~{}", &pwd[home.len()..])
+    } else {
+        pwd
+    };
+    let branch = git_branch();
+    let path_line = if branch.is_empty() {
+        pwd_display.clone()
+    } else {
+        format!("{pwd_display} ({branch})")
+    };
+    // Truncate if too wide.
+    let path_truncated: String = if path_line.chars().count() > w.saturating_sub(1) {
+        let mut s: String = path_line.chars().take(w.saturating_sub(2)).collect();
+        s.push('…');
+        s
+    } else {
+        path_line
+    };
+    println!("\x1b[38;2;102;102;102m{path_truncated}\x1b[0m");
+
+    // ── Line 2: stats left + model right ─────────────────────────────────────
     let (in_rate, out_rate) = model_cost_rates(model);
     let cost = (total_in as f64 / 1_000_000.0) * in_rate
              + (total_out as f64 / 1_000_000.0) * out_rate;
@@ -1167,49 +1194,69 @@ pub fn print_turn_footer(
     } else { 0.0 };
     let ctx_str = format!("{:.1}%/{}", ctx_pct, fmt_tokens(ctx_window));
 
-    // Colour the context % by fill level
-    let (ctx_r, ctx_g, ctx_b) = if ctx_pct >= 90.0 { (200u8, 60u8, 60u8) }
-                                 else if ctx_pct >= 70.0 { (200u8, 160u8, 40u8) }
-                                 else { (70u8, 78u8, 95u8) };
-
-    // Left side: ↑12k ↓3.4k  $0.0042  42.3%/200k
-    let mut left_parts: Vec<String> = Vec::new();
-    if total_in > 0 { left_parts.push(format!("↑{}", fmt_tokens(total_in))); }
-    if total_out > 0 { left_parts.push(format!("↓{}", fmt_tokens(total_out))); }
-    if !cost_str.is_empty() { left_parts.push(cost_str); }
-
-    let left_plain = left_parts.join("  ");
-
-    // Right side: model name (truncated if needed)
-    let right = if model.len() > 40 { &model[..40] } else { model };
-
-    // Compose the line with ctx coloured inline
-    let ctx_ansi = format!("\x1b[38;2;{ctx_r};{ctx_g};{ctx_b}m{ctx_str}\x1b[0m");
-    let full_left_ansi = if left_plain.is_empty() {
-        ctx_ansi.clone()
+    // Colorize context % — break out of dim, apply warning/error, return to dim.
+    let ctx_colored = if ctx_pct >= 90.0 {
+        format!("\x1b[0m\x1b[38;2;204;102;102m{ctx_str}\x1b[0m\x1b[38;2;102;102;102m")
+    } else if ctx_pct >= 70.0 {
+        format!("\x1b[0m\x1b[38;2;255;255;0m{ctx_str}\x1b[0m\x1b[38;2;102;102;102m")
     } else {
-        format!("\x1b[38;2;55;62;76m\x1b[2m{left_plain}\x1b[0m  {ctx_ansi}")
+        ctx_str.clone()
     };
 
-    let visible_left = left_parts.iter().map(|s| s.len()).sum::<usize>()
-        + if left_parts.len() > 1 { (left_parts.len() - 1) * 2 } else { 0 }
-        + if !left_parts.is_empty() { 2 } else { 0 }
-        + ctx_str.len();
+    let mut stat_parts: Vec<String> = Vec::new();
+    if total_in > 0 { stat_parts.push(format!("↑{}", fmt_tokens(total_in))); }
+    if total_out > 0 { stat_parts.push(format!("↓{}", fmt_tokens(total_out))); }
+    if !cost_str.is_empty() { stat_parts.push(cost_str); }
+    stat_parts.push(ctx_colored);
 
+    let stats_plain_len: usize = {
+        let mut parts_for_len: Vec<String> = Vec::new();
+        if total_in > 0 { parts_for_len.push(format!("↑{}", fmt_tokens(total_in))); }
+        if total_out > 0 { parts_for_len.push(format!("↓{}", fmt_tokens(total_out))); }
+        // cost_str length
+        let cost_raw = if cost >= 0.01 {
+            format!("${cost:.3}")
+        } else if cost >= 0.0001 {
+            format!("${cost:.4}")
+        } else {
+            String::new()
+        };
+        if !cost_raw.is_empty() { parts_for_len.push(cost_raw); }
+        parts_for_len.push(ctx_str.clone());
+        parts_for_len.join(" ").len()
+    };
+
+    let right = if model.len() > 40 { &model[..40] } else { model };
     let right_len = right.len();
-    let pad = w.saturating_sub(2 + visible_left + 2 + right_len);
+    let pad = w.saturating_sub(stats_plain_len + right_len + 2).max(2);
 
+    let stats_ansi = stat_parts.join(" ");
     println!(
-        "  {full_left_ansi}{}  \x1b[38;2;55;62;76m\x1b[2m{right}\x1b[0m",
+        "\x1b[38;2;102;102;102m{stats_ansi}{}{right}\x1b[0m",
         " ".repeat(pad),
     );
 
-    // Context warnings — only the highest threshold
+    // Context warnings.
     if ctx_pct >= 90.0 {
         print_warning("Context 90%+ full — run /compact now or start /new session.");
     } else if ctx_pct >= 70.0 {
         print_warning(&format!("Context at {ctx_pct:.0}% — consider /compact soon."));
     }
+}
+
+/// Get the current git branch name, or empty string if not in a git repo.
+fn git_branch() -> String {
+    std::process::Command::new("git")
+        .args(["rev-parse", "--abbrev-ref", "HEAD"])
+        .output()
+        .ok()
+        .and_then(|o| if o.status.success() {
+            String::from_utf8(o.stdout).ok()
+        } else {
+            None
+        })
+        .map(|s| s.trim().to_string())
+        .unwrap_or_default()
 }
 
 pub fn print_section_header(title: &str) {
@@ -1234,96 +1281,58 @@ pub fn print_section_header(title: &str) {
 
 /// Print a welcome banner with provider status.
 pub fn print_welcome_banner(provider_info: &str, auth_store: &dcode_providers::AuthStore) {
-    let w = terminal::size().map(|(w, _)| w as usize).unwrap_or(80);
-    let sep = "─".repeat(w.saturating_sub(2));
+    // Pi-mono style: logo line + keybinding hints, no box borders.
+    // dim = #666666, muted = #808080, accent = #8abeb7
+    const DIM:   &str = "\x1b[38;2;102;102;102m";
+    const MUTED: &str = "\x1b[38;2;128;128;128m";
+    const ACCNT: &str = "\x1b[38;2;138;190;183m";
+    const RST:   &str = "\x1b[0m";
+    const BOLD:  &str = "\x1b[1m";
 
-    // Top separator — dim border
-    let _ = execute!(
-        stdout(),
-        Print("\n"),
-        SetForegroundColor(C_DIM),
-        SetAttribute(Attribute::Dim),
-        Print(format!("  {sep}\n")),
-        ResetColor,
-        SetAttribute(Attribute::Reset),
-    );
+    // ── Logo: "d-code v0.1.x" ─────────────────────────────────────────────────
+    let version = env!("CARGO_PKG_VERSION");
+    println!();
+    println!(" {ACCNT}{BOLD}d-code{RST} {DIM}v{version}{RST}");
+    println!();
 
-    // Title row: "  d-code  ·  provider/model  ─────  /help"
-    let hints = "/help · /model · Tab";
-    let middle_vis = 8 + visible_str_len(provider_info);
-    let fill = w.saturating_sub(2 + middle_vis + 2 + hints.len());
-    let _ = execute!(
-        stdout(),
-        Print("  "),
-        SetForegroundColor(C_ACCENT),          // teal accent for logo
-        SetAttribute(Attribute::Bold),
-        Print("d-code"),
-        SetAttribute(Attribute::Reset),
-        ResetColor,
-        SetForegroundColor(C_DIM),
-        Print("  ·  "),
-        ResetColor,
-        SetForegroundColor(C_BORDER),           // blue for provider
-        Print(provider_info),
-        ResetColor,
-        SetForegroundColor(C_DIM),
-        SetAttribute(Attribute::Dim),
-        Print(format!("  {}", "─".repeat(fill.saturating_sub(2)))),
-        Print(format!("  {hints}")),
-        SetAttribute(Attribute::Reset),
-        ResetColor,
-        Print("\n"),
-    );
-
-    // Provider auth status row
-    // Active dot: accent teal, inactive: dim
-    let dot_on  = "\x1b[38;2;138;190;183m●\x1b[0m"; // C_ACCENT
-    let dot_off = "\x1b[38;2;102;102;102m\x1b[2m○\x1b[0m"; // C_DIM
-    let anth_dot = if auth_store.anthropic.is_some() { dot_on } else { dot_off };
-    let cop_dot  = if auth_store.copilot.is_some()   { dot_on } else { dot_off };
-    let oai_dot  = if auth_store.openai.is_some() || auth_store.openai_oauth.is_some() { dot_on } else { dot_off };
-    let gem_dot  = if auth_store.gemini.is_some() || std::env::var("GEMINI_API_KEY").is_ok() { dot_on } else { dot_off };
-    let or_dot   = if auth_store.openrouter.is_some() || std::env::var("OPENROUTER_API_KEY").is_ok() { dot_on } else { dot_off };
-
-    let _ = execute!(
-        stdout(),
-        Print("  "),
-        SetForegroundColor(C_DIM),
-        SetAttribute(Attribute::Dim),
-        Print("providers  "),
-        SetAttribute(Attribute::Reset),
-        ResetColor,
-    );
-    for (dot, label) in [
-        (anth_dot, "anthropic"),
-        (cop_dot, "copilot"),
-        (oai_dot, "openai"),
-        (gem_dot, "gemini"),
-        (or_dot, "openrouter"),
-    ] {
-        let active = dot == dot_on;
-        print!("{dot} ");
-        let _ = execute!(
-            stdout(),
-            SetForegroundColor(if active { C_TEXT } else { C_DIM }),
-            SetAttribute(if active { Attribute::Reset } else { Attribute::Dim }),
-            Print(format!("{label}  ")),
-            SetAttribute(Attribute::Reset),
-            ResetColor,
-        );
+    // ── Keybinding hints (one per line, dim key + muted description) ──────────
+    let hints: &[(&str, &str)] = &[
+        ("^C",        "to interrupt / exit (empty)"),
+        ("^G",        "for external editor"),
+        ("^P / ^N",   "to cycle models"),
+        ("Shift+↵",   "for newline"),
+        ("/",         "for commands"),
+        ("!",         "to run bash"),
+    ];
+    for (key, desc) in hints {
+        println!(" {DIM}{key}{RST} {MUTED}{desc}{RST}");
     }
 
-    // Bottom separator
-    let _ = execute!(
-        stdout(),
-        Print("\n"),
-        SetForegroundColor(C_DIM),
-        SetAttribute(Attribute::Dim),
-        Print(format!("  {sep}\n")),
-        ResetColor,
-        SetAttribute(Attribute::Reset),
-        Print("\n"),
-    );
+    // ── Provider status (compact, one line) ───────────────────────────────────
+    println!();
+    let dot_on  = format!("{ACCNT}●{RST}");
+    let dot_off = format!("{DIM}○{RST}");
+    let providers: &[(&str, bool)] = &[
+        ("anthropic",  auth_store.anthropic.is_some()),
+        ("copilot",    auth_store.copilot.is_some()),
+        ("openai",     auth_store.openai.is_some() || auth_store.openai_oauth.is_some()),
+        ("gemini",     auth_store.gemini.is_some() || std::env::var("GEMINI_API_KEY").is_ok()),
+        ("openrouter", auth_store.openrouter.is_some() || std::env::var("OPENROUTER_API_KEY").is_ok()),
+    ];
+    print!(" ");
+    for (label, active) in providers {
+        let dot = if *active { &dot_on } else { &dot_off };
+        if *active {
+            print!("{dot} {MUTED}{label}{RST}  ");
+        } else {
+            print!("{dot} {DIM}{label}{RST}  ");
+        }
+    }
+    println!();
+    println!();
+
+    let _ = provider_info; // suppress unused warning
+    let _ = auth_store;
 }
 
 /// Print a condensed replay of a session's conversation for context on resume.

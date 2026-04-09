@@ -5,8 +5,9 @@
 ///   Phase 2 — build a structured summary (Goal / Discoveries / Accomplished / Relevant files).
 use dcode_providers::{ContentBlock, Message, Role};
 
-/// Keep a 20 000-token buffer before the context limit, matching opencode's COMPACTION_BUFFER.
-const COMPACTION_BUFFER: usize = 20_000;
+/// Keep a 30 000-token buffer before the context limit.
+/// Trigger compaction earlier so we never get close to the hard limit mid-turn.
+const COMPACTION_BUFFER: usize = 30_000;
 
 /// Compact the message list when total estimated tokens approach the context limit.
 /// Preserves the last `keep_recent` messages verbatim.

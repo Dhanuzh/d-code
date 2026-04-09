@@ -9,11 +9,13 @@
 /// to large outputs via targeted grep/read_file calls.
 use std::path::Path;
 
-/// Inline limit: outputs below this size go directly into context (≈4 000 tokens).
-const INLINE_LIMIT_BYTES: usize = 16_000;
+/// Inline limit: outputs below this size go directly into context (≈1500 tokens).
+/// Kept intentionally small — large outputs are offloaded to disk so the model
+/// can fetch specific sections via read_file/grep rather than flooding context.
+const INLINE_LIMIT_BYTES: usize = 8_000;
 
-/// Preview size returned when output is offloaded (≈500 tokens).
-const PREVIEW_BYTES: usize = 2_000;
+/// Preview size returned when output is offloaded (≈300 tokens).
+const PREVIEW_BYTES: usize = 1_500;
 
 /// Check whether `output` exceeds the inline limit.
 /// If it does: save full content to `~/.d-code/tmp/<tool>-<hash>.txt`

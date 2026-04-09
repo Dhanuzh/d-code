@@ -1,19 +1,26 @@
 //! ToolExecution component — mirrors pi-mono's tool-execution.ts.
 //!
-//! Shows tool name, status (running/done/error), elapsed time,
-//! and a preview of the output. Uses DynamicBorder-style separators.
+//! Shows tool name, status (running/done/error) with pi-mono colored backgrounds:
+//!   Running  → toolPendingBg  #282832
+//!   Done     → toolSuccessBg  #283228
+//!   Error    → toolErrorBg    #3c2828
 
 use std::time::Instant;
 use crate::{Component, Line};
 
-const C_BORDER:  &str = "\x1b[38;2;95;135;255m";   // #5f87ff blue
-const C_ACCENT:  &str = "\x1b[38;2;138;190;183m";  // #8abeb7 teal
-const C_SUCCESS: &str = "\x1b[38;2;181;189;104m";  // #b5bd68 green
-const C_ERROR:   &str = "\x1b[38;2;204;102;102m";  // #cc6666 red
-const C_MUTED:   &str = "\x1b[38;2;128;128;128m";
-const C_DIM:     &str = "\x1b[38;2;102;102;102m";
-const C_TEXT:    &str = "\x1b[38;2;212;215;222m";
+// Background colors (pi-mono dark.json)
+const BG_PENDING: &str = "\x1b[48;2;40;40;50m";    // toolPendingBg  #282832
+const BG_SUCCESS: &str = "\x1b[48;2;40;50;40m";    // toolSuccessBg  #283228
+const BG_ERROR:   &str = "\x1b[48;2;60;40;40m";    // toolErrorBg    #3c2828
+
+// Foreground colors
+const C_ACCENT:  &str = "\x1b[38;2;138;190;183m";  // accent teal
+const C_SUCCESS: &str = "\x1b[38;2;181;189;104m";  // green
+const C_ERROR:   &str = "\x1b[38;2;204;102;102m";  // red
+const C_MUTED:   &str = "\x1b[38;2;128;128;128m";  // gray
+const C_DIM:     &str = "\x1b[38;2;102;102;102m";  // dimGray
 const RESET:     &str = "\x1b[0m";
+const BOLD:      &str = "\x1b[1m";
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum ToolStatus {
@@ -26,17 +33,11 @@ pub enum ToolStatus {
 pub struct ToolExecution {
     pub name: String,
     pub status: ToolStatus,
-    /// Parsed tool input (shown as brief summary).
     pub input_summary: String,
-    /// Output preview (first few lines of result).
     pub output_preview: String,
-    /// Elapsed ms (set on completion).
     pub elapsed_ms: u64,
     started_at: Instant,
     dirty: bool,
-    /// Cached render to avoid re-computing on every frame when not dirty.
-    cached_lines: Vec<String>,
-    last_width: u16,
 }
 
 impl ToolExecution {
@@ -49,12 +50,9 @@ impl ToolExecution {
             elapsed_ms: 0,
             started_at: Instant::now(),
             dirty: true,
-            cached_lines: Vec::new(),
-            last_width: 0,
         }
     }
 
-    /// Mark as done with result.
     pub fn finish(&mut self, output: impl Into<String>, is_error: bool, input_summary: impl Into<String>) {
         self.status = if is_error { ToolStatus::Error } else { ToolStatus::Done };
         self.elapsed_ms = self.started_at.elapsed().as_millis() as u64;
@@ -63,61 +61,71 @@ impl ToolExecution {
         self.dirty = true;
     }
 
-    /// Current elapsed ms (for live display while running).
     pub fn current_elapsed_ms(&self) -> u64 {
         self.started_at.elapsed().as_millis() as u64
     }
 
     fn build_lines(&self, width: u16) -> Vec<String> {
         let w = width as usize;
-        let border_line: String = std::iter::repeat('─').take(w.saturating_sub(2)).collect();
-
         let mut lines = Vec::new();
+
+        // Empty spacer line before the block.
+        lines.push(String::new());
 
         match self.status {
             ToolStatus::Running => {
-                // Top border
-                lines.push(format!("  {C_BORDER}{border_line}{RESET}"));
-                // Tool name with running indicator
+                let bg = BG_PENDING;
                 let elapsed = format_elapsed(self.current_elapsed_ms());
-                lines.push(format!("  {C_ACCENT}◦ {}{RESET}  {C_DIM}{elapsed}{RESET}", self.name));
-            }
-            ToolStatus::Done => {
-                let elapsed = format_elapsed(self.elapsed_ms);
-                // Top border (green for success)
-                lines.push(format!("  {C_SUCCESS}{border_line}{RESET}"));
-                // Status line
                 let summary = if !self.input_summary.is_empty() {
                     format!("  {C_DIM}{}{RESET}", self.input_summary)
                 } else {
                     String::new()
                 };
-                lines.push(format!(
-                    "  {C_SUCCESS}✓ {}{RESET}{summary}  {C_DIM}{elapsed}{RESET}",
+                let content = format!(
+                    " {C_ACCENT}◦ {BOLD}{}{RESET}{bg}{summary}  {C_DIM}{elapsed}",
                     self.name
-                ));
-                // Output preview
-                if !self.output_preview.is_empty() {
-                    for l in self.output_preview.lines().take(8) {
-                        lines.push(format!("    {C_MUTED}{}{RESET}", l));
-                    }
-                }
-                // Bottom border
-                lines.push(format!("  {C_SUCCESS}{border_line}{RESET}"));
+                );
+                lines.push(bg_line(bg, &content, w));
             }
-            ToolStatus::Error => {
+            ToolStatus::Done => {
+                let bg = BG_SUCCESS;
                 let elapsed = format_elapsed(self.elapsed_ms);
-                lines.push(format!("  {C_ERROR}{border_line}{RESET}"));
-                lines.push(format!(
-                    "  {C_ERROR}✗ {}{RESET}  {C_DIM}{elapsed}{RESET}",
+                let summary = if !self.input_summary.is_empty() {
+                    format!("  {C_DIM}{}{RESET}", self.input_summary)
+                } else {
+                    String::new()
+                };
+                let content = format!(
+                    " {C_SUCCESS}✓ {BOLD}{}{RESET}{bg}{summary}  {C_DIM}{elapsed}",
                     self.name
-                ));
+                );
+                lines.push(bg_line(bg, &content, w));
                 if !self.output_preview.is_empty() {
                     for l in self.output_preview.lines().take(6) {
-                        lines.push(format!("    {C_ERROR}{}{RESET}", l));
+                        let out_content = format!("   {C_MUTED}{l}");
+                        lines.push(bg_line(bg, &out_content, w));
                     }
                 }
-                lines.push(format!("  {C_ERROR}{border_line}{RESET}"));
+            }
+            ToolStatus::Error => {
+                let bg = BG_ERROR;
+                let elapsed = format_elapsed(self.elapsed_ms);
+                let summary = if !self.input_summary.is_empty() {
+                    format!("  {C_DIM}{}{RESET}", self.input_summary)
+                } else {
+                    String::new()
+                };
+                let content = format!(
+                    " {C_ERROR}✗ {BOLD}{}{RESET}{bg}{summary}  {C_DIM}{elapsed}",
+                    self.name
+                );
+                lines.push(bg_line(bg, &content, w));
+                if !self.output_preview.is_empty() {
+                    for l in self.output_preview.lines().take(4) {
+                        let out_content = format!("   {C_ERROR}{l}");
+                        lines.push(bg_line(bg, &out_content, w));
+                    }
+                }
             }
         }
 
@@ -127,24 +135,35 @@ impl ToolExecution {
 
 impl Component for ToolExecution {
     fn render(&mut self, width: u16) -> Vec<Line> {
-        if self.dirty || self.last_width != width {
-            self.cached_lines = self.build_lines(width);
-            self.last_width = width;
-            self.dirty = false;
-        }
-        // Running tools are always dirty (elapsed time changes).
-        if self.status == ToolStatus::Running {
-            self.dirty = true; // re-render next frame
-            self.cached_lines = self.build_lines(width);
-        }
-        self.cached_lines.iter().map(|s| Line::raw(s.clone())).collect()
+        // Running tools re-render every frame for live elapsed time.
+        let lines = self.build_lines(width);
+        self.dirty = self.status == ToolStatus::Running;
+        lines.into_iter().map(|s| Line::raw(s)).collect()
     }
 
     fn is_dirty(&self) -> bool { self.dirty }
     fn mark_clean(&mut self) { self.dirty = false; }
 }
 
-/// Format elapsed milliseconds as human-readable.
+/// Apply background color to a content string and pad to full terminal width.
+///
+/// The content may contain ANSI codes (foreground colors, resets). We need to:
+/// 1. Set the background color
+/// 2. Print the content (which may include fg color resets — those clear the bg!)
+/// 3. Pad remaining visual columns with the background still active
+/// 4. Final RESET
+///
+/// To prevent fg RESET codes inside content from clearing the background mid-line,
+/// we re-apply the bg color after any reset. We do this by replacing `\x1b[0m`
+/// within the content with `\x1b[0m<BG>`.
+fn bg_line(bg: &str, content: &str, width: usize) -> String {
+    // Replace resets inside content with reset + re-apply bg so the bg persists.
+    let content_patched = content.replace(RESET, &format!("{RESET}{bg}"));
+    let visible = strip_ansi_len(content);
+    let pad = width.saturating_sub(visible);
+    format!("{bg}{content_patched}{}{RESET}", " ".repeat(pad))
+}
+
 fn format_elapsed(ms: u64) -> String {
     if ms < 1000 {
         format!("{ms}ms")
@@ -155,14 +174,17 @@ fn format_elapsed(ms: u64) -> String {
     }
 }
 
-/// Truncate output to a sensible preview length.
 fn truncate_preview(output: String) -> String {
-    let lines: Vec<&str> = output.lines().take(8).collect();
-    if output.lines().count() > 8 {
+    let lines: Vec<&str> = output.lines().take(6).collect();
+    if output.lines().count() > 6 {
         format!("{}\n  …", lines.join("\n"))
     } else {
         lines.join("\n")
     }
+}
+
+fn strip_ansi_len(s: &str) -> usize {
+    crate::line::strip_ansi(s).len()
 }
 
 /// Build a short summary string from a tool's JSON input args.
@@ -175,10 +197,7 @@ pub fn summarize_input(name: &str, input: &serde_json::Value) -> String {
             let truncated = cmd.chars().take(60).collect::<String>();
             if cmd.len() > 60 { format!("{truncated}…") } else { truncated }
         }
-        "grep" | "search" => {
-            let pattern = input["pattern"].as_str().unwrap_or("");
-            format!("{pattern}")
-        }
+        "grep" | "search" => input["pattern"].as_str().unwrap_or("").to_string(),
         "glob" | "list_files" => input["pattern"].as_str().unwrap_or("").to_string(),
         "list_dir" => input["path"].as_str().unwrap_or("").to_string(),
         _ => String::new(),

@@ -1,15 +1,15 @@
-//! StatusBar component — footer line showing token usage, cost, model.
+//! StatusBar component — 2-line footer matching pi-mono's footer.ts.
 //!
-//! Mirrors pi-mono's footer.ts component.
+//! Line 1: `~path (branch)` dim
+//! Line 2: `↑in ↓out $cost ctx%/window` left  +  `model` right — both dim
+//!         context % colorized: >90% red, >70% yellow, else default
 
 use crate::{Component, Line};
 
-const C_MUTED:   &str = "\x1b[38;2;128;128;128m";
-const C_DIM:     &str = "\x1b[38;2;102;102;102m";
-const C_SUCCESS: &str = "\x1b[38;2;181;189;104m";
-const C_WARNING: &str = "\x1b[38;2;220;175;50m";
-const C_ERROR:   &str = "\x1b[38;2;204;102;102m";
-const C_ACCENT:  &str = "\x1b[38;2;138;190;183m";
+// Pi-mono dark theme colors
+const C_DIM:     &str = "\x1b[38;2;102;102;102m";   // dimGray #666666
+const C_WARNING: &str = "\x1b[38;2;255;255;0m";     // yellow  #ffff00
+const C_ERROR:   &str = "\x1b[38;2;204;102;102m";   // red     #cc6666
 const RESET:     &str = "\x1b[0m";
 
 pub struct StatusBar {
@@ -19,6 +19,10 @@ pub struct StatusBar {
     pub context_used: u32,
     pub context_window: u32,
     pub cost_usd: f64,
+    /// Working directory (shown with ~ for home), e.g. "~/projects/foo"
+    pub cwd: String,
+    /// Git branch, e.g. "main"
+    pub branch: String,
     dirty: bool,
 }
 
@@ -31,6 +35,8 @@ impl StatusBar {
             context_used: 0,
             context_window,
             cost_usd: 0.0,
+            cwd: String::new(),
+            branch: String::new(),
             dirty: true,
         }
     }
@@ -42,60 +48,88 @@ impl StatusBar {
         self.cost_usd = cost_usd;
         self.dirty = true;
     }
+
+    pub fn set_cwd(&mut self, cwd: impl Into<String>) {
+        self.cwd = cwd.into();
+        self.dirty = true;
+    }
+
+    pub fn set_branch(&mut self, branch: impl Into<String>) {
+        self.branch = branch.into();
+        self.dirty = true;
+    }
 }
 
 impl Component for StatusBar {
     fn render(&mut self, width: u16) -> Vec<Line> {
         self.dirty = false;
+        let w = width as usize;
 
+        // ── Line 1: cwd (branch) ──────────────────────────────────────────────
+        let pwd_text = {
+            let mut s = if self.cwd.is_empty() {
+                String::new()
+            } else {
+                self.cwd.clone()
+            };
+            if !self.branch.is_empty() {
+                s.push_str(&format!(" ({})", self.branch));
+            }
+            s
+        };
+        // Truncate to width.
+        let pwd_truncated = truncate_str(&pwd_text, w.saturating_sub(1));
+        let line1 = format!("{C_DIM}{pwd_truncated}{RESET}");
+
+        // ── Line 2: stats left + model right ─────────────────────────────────
         let ctx_pct = if self.context_window > 0 {
             (self.context_used as f64 / self.context_window as f64) * 100.0
         } else {
             0.0
         };
 
-        let ctx_color = if ctx_pct >= 80.0 { C_ERROR }
-            else if ctx_pct >= 60.0 { C_WARNING }
-            else { C_SUCCESS };
+        let ctx_color = if ctx_pct >= 90.0 { C_ERROR }
+            else if ctx_pct >= 70.0 { C_WARNING }
+            else { "" };  // default (no extra color, dimmed by wrapper)
 
-        // Left side: token counts + cost
-        let left = {
-            let mut parts = Vec::new();
-            if self.total_input > 0 {
-                parts.push(format!("{C_MUTED}↑{}{RESET}", fmt_tokens(self.total_input)));
+        // Stats: ↑in ↓out $cost ctx%/window
+        let mut stat_parts: Vec<String> = Vec::new();
+        if self.total_input > 0 {
+            stat_parts.push(format!("↑{}", fmt_tokens(self.total_input)));
+        }
+        if self.total_output > 0 {
+            stat_parts.push(format!("↓{}", fmt_tokens(self.total_output)));
+        }
+        if self.cost_usd > 0.0 {
+            stat_parts.push(format!("${:.3}", self.cost_usd));
+        }
+        if self.context_window > 0 {
+            let ctx_str = format!("{:.1}%/{}", ctx_pct, fmt_tokens(self.context_window));
+            if ctx_color.is_empty() {
+                stat_parts.push(ctx_str);
+            } else {
+                // Color the ctx% part, then re-apply dim via the outer wrapper.
+                // We break out of dim, apply the warning/error color, then go back to dim.
+                stat_parts.push(format!("{RESET}{ctx_color}{ctx_str}{RESET}{C_DIM}"));
             }
-            if self.total_output > 0 {
-                parts.push(format!("{C_MUTED}↓{}{RESET}", fmt_tokens(self.total_output)));
-            }
-            if self.cost_usd > 0.0 {
-                parts.push(format!("{C_DIM}${:.4}{RESET}", self.cost_usd));
-            }
-            if self.context_window > 0 {
-                parts.push(format!(
-                    "{ctx_color}{:.1}%/{}{RESET}",
-                    ctx_pct,
-                    fmt_tokens(self.context_window)
-                ));
-            }
-            parts.join("  ")
-        };
+        }
+        let stats_left = stat_parts.join(" ");
+        let stats_left_vis = strip_ansi_len(&stats_left);
 
-        // Right side: model name
-        let right = format!("{C_DIM}{}{RESET}", self.model);
+        let model_right = &self.model;
+        let model_vis = model_right.len();
 
-        // Measure visible widths.
-        let left_vis = strip_ansi_len(&left);
-        let right_vis = strip_ansi_len(&right);
-        let w = width as usize;
-        let gap = w.saturating_sub(left_vis + right_vis + 4); // 4 for "  " padding each side
-        let padding: String = " ".repeat(gap);
+        let gap = w.saturating_sub(stats_left_vis + model_vis + 2); // +2 min padding
+        let padding = " ".repeat(gap.max(2));
 
-        vec![Line::raw(format!("  {left}{padding}{right}"))]
+        let line2 = format!("{C_DIM}{stats_left}{padding}{model_right}{RESET}");
+
+        vec![Line::raw(line1), Line::raw(line2)]
     }
 
     fn is_dirty(&self) -> bool { self.dirty }
     fn mark_clean(&mut self) { self.dirty = false; }
-    fn height_hint(&self) -> Option<u16> { Some(1) }
+    fn height_hint(&self) -> Option<u16> { Some(2) }
 }
 
 fn fmt_tokens(n: u32) -> String {
@@ -110,4 +144,14 @@ fn fmt_tokens(n: u32) -> String {
 
 fn strip_ansi_len(s: &str) -> usize {
     crate::line::strip_ansi(s).len()
+}
+
+fn truncate_str(s: &str, max_chars: usize) -> String {
+    let chars: Vec<char> = s.chars().collect();
+    if chars.len() <= max_chars {
+        s.to_string()
+    } else {
+        let truncated: String = chars[..max_chars.saturating_sub(1)].iter().collect();
+        format!("{truncated}…")
+    }
 }

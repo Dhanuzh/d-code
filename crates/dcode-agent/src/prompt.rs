@@ -30,9 +30,10 @@ EFFICIENCY RULES (critical — follow exactly):
   BAD:  read_file A → wait → read_file B → wait → read_file C
   GOOD: read_file A + read_file B + read_file C in one response (all run simultaneously)
 - NEVER read the same file twice. Cache what you learned.
-- Use grep to pinpoint line numbers BEFORE reading — then read only that range with start_line/end_line.
+- Use grep to find line numbers FIRST, then read only that range with start_line/end_line.
+- Tool results are truncated — if output is cut off, use read_file with start_line/end_line or grep to get the specific section.
 - edit_file over write_file for any existing file.
-- After editing code: run build/test to verify.
+- After editing code: run build/test to verify. Fix ALL errors before stopping.
 - Output ONLY results — no narration (\"I'll check…\", \"Let me look…\", \"Now I'll…\").
 - Be concise: 1-5 lines unless producing code. No summaries of what you just did."
     );
