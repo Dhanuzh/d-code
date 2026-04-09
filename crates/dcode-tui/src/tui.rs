@@ -107,12 +107,13 @@ impl Tui {
         self.write_diff(lines);
     }
 
-    /// Render a pre-built list of lines, throttled to 16ms.
+    /// Render a pre-built list of lines, throttled to ~60fps (16ms).
+    /// Stores the lines so the next forced render_lines() call can show latest state.
     pub fn render_lines_throttled(&mut self, lines: Vec<String>) {
-        if self.last_render.elapsed() < Duration::from_millis(16) {
-            return;
+        if self.last_render.elapsed() >= Duration::from_millis(16) {
+            self.write_diff(lines);
         }
-        self.render_lines(lines);
+        // If throttled, do nothing — caller will force a render at TurnDone.
     }
 
     /// Render if pending and throttle interval has elapsed (16ms = 60fps).
@@ -129,17 +130,18 @@ impl Tui {
     }
 
     /// Commit: finalize current content as static (no longer tracked for diff).
-    /// Call at end of each turn. The content stays on screen but future renders
-    /// start fresh from the current cursor position.
+    /// Call at end of each turn. The content stays on screen; future renders
+    /// start fresh from the current cursor position (appending below).
+    ///
+    /// NOTE: if using render_lines() directly (external rendering), do NOT call
+    /// render_now() here — content is already on screen and render_now() would
+    /// erase it by diffing against empty component list.
     pub fn commit(&mut self) {
-        // Do a final render to ensure everything is up to date.
-        self.render_now();
-        // Move cursor past all rendered content — it's now static.
-        let new_lines = self.collect_lines();
-        let lines_count = new_lines.len();
-        if lines_count > 0 {
-            // Cursor is already at the bottom from last render. Just reset state.
+        // Only re-render from components if components are actually registered.
+        if !self.components.is_empty() {
+            self.render_now();
         }
+        // Reset diff state — content is now static, cursor is at bottom.
         self.prev_lines.clear();
         self.components.clear();
         self.render_pending = false;
