@@ -28,6 +28,23 @@ pub enum CommandResult {
     NewSession,
     Export { path: Option<String> },
     Init,
+    /// Set a display name for the current session.
+    SetName { name: String },
+    /// Copy the last assistant message to clipboard.
+    CopyLast,
+    /// Fork the session at a specific turn (0 = current).
+    Fork { turn: Option<usize> },
+    /// Show the session tree (all sessions with parent-child relationships).
+    ShowTree,
+    /// Share the session as a GitHub gist.
+    Share,
+    /// List available prompt templates.
+    ListPrompts,
+    /// (Unused — template expansion is handled inline before command dispatch.)
+    #[allow(dead_code)]
+    ExpandPrompt { expanded: String },
+    /// List available skills.
+    ListSkills,
 }
 
 #[derive(Debug, Clone)]
@@ -75,21 +92,35 @@ pub fn handle(input: &str, agent: &Agent) -> CommandResult {
             println!(
                 "\
 Slash commands:
-  /help           Show this help
-  /status         Session token usage, cost & provider info
-  /compact        Force context compaction (save tokens)
-  /undo           Undo the last turn
-  /clear          Clear conversation (no save)
-  /new            Save current session and start fresh
-  /sessions       Browse and resume saved sessions
-  /resume         Resume latest saved session
-  /export [file]  Export session to markdown (default: session.md)
-  /init           Scan project and generate DCODE.md context file
-  /model          Pick model from menu
-  /model [name]   Set provider/model  (e.g. /model anthropic/claude-opus-4-5)
-  /login [p]      Login to provider (anthropic/copilot/openai)
-  /logout [p]     Logout from provider
-  /quit           Exit d-code
+  /help              Show this help
+  /status            Session token usage, cost & provider info
+  /compact           Force context compaction (save tokens)
+  /undo              Undo the last turn
+  /clear             Clear conversation (no save)
+  /new               Save current session and start fresh
+  /name <title>      Set a display name for the current session
+  /sessions          Browse and resume saved sessions
+  /resume            Resume latest saved session
+  /tree              Show session tree (branches from /fork)
+  /fork [N]          Fork session at turn N (default: current)
+  /export [file]     Export session to markdown (default: session.md)
+  /share             Share session as a secret GitHub gist
+  /copy              Copy last assistant message to clipboard
+  /init              Scan project and generate DCODE.md context file
+  /model             Pick model from menu
+  /model [name]      Set provider/model  (e.g. /model gemini/gemini-2.0-flash)
+  /login [provider]  Login to provider (anthropic/copilot/openai/gemini/openrouter)
+  /logout [provider] Logout from provider
+  /prompts           List available prompt templates
+  /skills            List available skills
+  /quit              Exit d-code
+
+Providers:
+  anthropic   — Claude models (OAuth)
+  copilot     — GitHub Copilot (OAuth)
+  openai      — GPT & o-series (OAuth or API key)
+  gemini      — Google Gemini (API key)
+  openrouter  — 100+ models via openrouter.ai (API key)
 
 Keyboard shortcuts:
   Ctrl+G          Open current input in $VISUAL/$EDITOR
@@ -109,7 +140,8 @@ Features:
   • Dangerous bash commands require confirmation before running
   • AI can ask you questions mid-task with ask_user tool
   • Git branch shown in prompt automatically
-  • Context compaction tracks modified vs read files
+  • Skills: place .md files in ~/.d-code/skills/ for reusable instructions
+  • Prompt templates: place .md files in ~/.d-code/prompts/ (invoke with /name)
 "
             );
             CommandResult::Handled
@@ -196,6 +228,21 @@ Features:
         "/resume" => CommandResult::ResumeLatest,
         "/new" => CommandResult::NewSession,
         "/export" => CommandResult::Export { path: None },
+        "/copy" => CommandResult::CopyLast,
+        "/fork" => CommandResult::Fork { turn: None },
+        "/tree" => CommandResult::ShowTree,
+        "/share" => CommandResult::Share,
+        "/prompts" => CommandResult::ListPrompts,
+        "/skills" => CommandResult::ListSkills,
+        _ if input.starts_with("/name") => {
+            let name = input.strip_prefix("/name").unwrap_or("").trim().to_string();
+            CommandResult::SetName { name }
+        }
+        _ if input.starts_with("/fork") => {
+            let arg = input.strip_prefix("/fork").unwrap_or("").trim();
+            let turn = arg.parse::<usize>().ok();
+            CommandResult::Fork { turn }
+        }
         _ if input.starts_with("/resume") => CommandResult::ResumeLatest,
         _ if input.starts_with("/login") => {
             let provider = input

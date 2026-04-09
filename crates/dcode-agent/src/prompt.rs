@@ -4,7 +4,13 @@ use std::path::Path;
 /// Build the system prompt for d-code.
 /// Auto-detects the project tech stack and injects build/test commands.
 /// Also reads DCODE.md (or .d-code/PROMPT.md) for per-project context.
+/// Appends skills loaded from ~/.d-code/skills/ and .d-code/skills/.
 pub fn build_system_prompt(cwd: &Path) -> String {
+    build_system_prompt_with_skills(cwd, None)
+}
+
+/// Same as `build_system_prompt` but accepts pre-loaded skills (avoids re-scanning).
+pub fn build_system_prompt_with_skills(cwd: &Path, skills: Option<&[crate::skills::Skill]>) -> String {
     let date = chrono::Local::now().format("%Y-%m-%d");
     let cwd_str = cwd.display();
 
@@ -34,11 +40,26 @@ EFFICIENCY RULES (critical — follow exactly):
     // Inject per-project context from DCODE.md or .d-code/PROMPT.md.
     let project_ctx = load_project_context(cwd);
 
-    if project_ctx.is_empty() {
+    let mut prompt = if project_ctx.is_empty() {
         core
     } else {
         format!("{core}\n\n--- PROJECT CONTEXT ---\n{project_ctx}")
+    };
+
+    // Append skills section.
+    let loaded_skills;
+    let skill_slice: &[crate::skills::Skill] = match skills {
+        Some(s) => s,
+        None => {
+            loaded_skills = crate::skills::load_skills(cwd);
+            &loaded_skills
+        }
+    };
+    if !skill_slice.is_empty() {
+        prompt.push_str(&crate::skills::format_skills_for_prompt(skill_slice));
     }
+
+    prompt
 }
 
 /// Detect the tech stack from files in CWD and return a compact hint string.

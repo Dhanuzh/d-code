@@ -1,6 +1,7 @@
 mod commands;
 mod input;
 mod login;
+mod prompts;
 mod render;
 mod repl;
 mod sessions;
@@ -61,9 +62,11 @@ async fn main() -> anyhow::Result<()> {
                 "anthropic" | "claude" => login::login_anthropic().await?,
                 "copilot" | "github" => login::login_copilot().await?,
                 "openai" | "gpt" => login::login_openai().await?,
+                "gemini" | "google" => login::login_gemini().await?,
+                "openrouter" | "or" => login::login_openrouter().await?,
                 other => {
                     render::print_error(&format!(
-                        "Unknown provider '{other}'. Use: anthropic, copilot, openai"
+                        "Unknown provider '{other}'. Use: anthropic, copilot, openai, gemini, openrouter"
                     ));
                     std::process::exit(1);
                 }

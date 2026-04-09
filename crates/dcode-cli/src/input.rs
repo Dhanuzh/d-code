@@ -594,16 +594,23 @@ impl LineEditor {
         queue!(out, MoveToColumn(0), Clear(ClearType::FromCursorDown))?;
 
         let matches = self.dropdown_matches(&sess.text);
+        // Show up to (terminal_height - 6) items so the dropdown never fills the screen.
+        let max_visible = terminal::size()
+            .map(|(_, h)| (h as usize).saturating_sub(6).clamp(6, 20))
+            .unwrap_or(14);
+        let visible_count = matches.len().min(max_visible);
         let dropdown_count = if matches.is_empty() {
             0
         } else {
-            matches.len().min(8) + 2 // +2 for top/bottom border lines
+            visible_count + 2 + if matches.len() > visible_count { 1 } else { 0 }
+            // +2 borders, +1 "more" line when truncated
         };
 
         // ── Prompt ────────────────────────────────────────────────────────────
+        // Accent teal, matching pi-mono's primary color
         queue!(
             out,
-            SetForegroundColor(Color::Rgb { r: 80, g: 200, b: 120 }),
+            SetForegroundColor(Color::Rgb { r: 138, g: 190, b: 183 }),
             SetAttribute(Attribute::Bold),
             Print(&self.prompt),
             ResetColor,
@@ -615,15 +622,28 @@ impl LineEditor {
         let lines: Vec<&str> = text.split('\n').collect();
         let n_lines = lines.len();
 
-        if text.is_empty() {
-            // Placeholder hint.
+        let hints_row = text.is_empty();
+        if hints_row {
+            // Placeholder text.
             queue!(
                 out,
                 SetForegroundColor(Color::Rgb { r: 55, g: 60, b: 72 }),
                 SetAttribute(Attribute::Italic),
-                Print("Message…  (Shift+Enter for newline · /help for commands)"),
+                Print("Message…"),
                 ResetColor,
                 SetAttribute(Attribute::Reset),
+            )?;
+            // Keybinding hints on a new line below (shown only when input is empty).
+            queue!(
+                out,
+                Print("\r\n"),
+                MoveToColumn(0),
+                SetForegroundColor(Color::Rgb { r: 48, g: 52, b: 64 }),
+                SetAttribute(Attribute::Dim),
+                Print("  ^C exit  ^G editor  ^P/N model  Shift+↵ newline  /help"),
+                ResetColor,
+                SetAttribute(Attribute::Reset),
+                Clear(ClearType::UntilNewLine),
             )?;
         } else {
             for (i, line) in lines.iter().enumerate() {
@@ -660,35 +680,38 @@ impl LineEditor {
 
         // ── Dropdown (boxed slash-command menu) ───────────────────────────────
         if !matches.is_empty() {
-            let visible = matches.len().min(8);
-            // Compute box width.
-            let max_item_len = matches.iter().take(visible).map(|s| s.len()).max().unwrap_or(4);
-            let box_inner = max_item_len + 4; // padding: "  item  "
+            // Compute box width from all visible items.
+            let max_item_len = matches.iter().take(visible_count).map(|s| s.len()).max().unwrap_or(4);
+            let box_inner = max_item_len + 4; // "  item  "
+            let border_col = Color::Rgb { r: 75, g: 85, b: 110 };
+            let item_col   = Color::Rgb { r: 190, g: 195, b: 210 };
+            let sel_col    = Color::Rgb { r: 80, g: 200, b: 120 };
 
             // Top border.
             queue!(out, Print("\r\n"), MoveToColumn(0))?;
             queue!(
                 out,
-                SetForegroundColor(Color::Rgb { r: 55, g: 62, b: 78 }),
+                SetForegroundColor(border_col),
                 Print(format!("  ╭{}╮", "─".repeat(box_inner))),
                 ResetColor,
+                Clear(ClearType::UntilNewLine),
             )?;
 
-            for (i, item) in matches.iter().take(visible).enumerate() {
+            for (i, item) in matches.iter().take(visible_count).enumerate() {
                 let is_sel = sess.comp_sel == Some(i);
-                let padding = box_inner - item.len() - 2; // 2 for leading "❯ " or "  "
+                let padding = box_inner.saturating_sub(item.len() + 2); // 2 for "❯ " / "  "
                 queue!(out, Print("\r\n"), MoveToColumn(0))?;
                 if is_sel {
                     queue!(
                         out,
-                        SetForegroundColor(Color::Rgb { r: 55, g: 62, b: 78 }),
+                        SetForegroundColor(border_col),
                         Print("  │ "),
-                        SetForegroundColor(Color::Rgb { r: 80, g: 200, b: 120 }),
+                        SetForegroundColor(sel_col),
                         SetAttribute(Attribute::Bold),
                         Print(format!("❯ {}{}", item, " ".repeat(padding))),
                         ResetColor,
                         SetAttribute(Attribute::Reset),
-                        SetForegroundColor(Color::Rgb { r: 55, g: 62, b: 78 }),
+                        SetForegroundColor(border_col),
                         Print(" │"),
                         ResetColor,
                         Clear(ClearType::UntilNewLine),
@@ -696,12 +719,12 @@ impl LineEditor {
                 } else {
                     queue!(
                         out,
-                        SetForegroundColor(Color::Rgb { r: 55, g: 62, b: 78 }),
+                        SetForegroundColor(border_col),
                         Print("  │ "),
-                        SetForegroundColor(Color::Rgb { r: 110, g: 118, b: 135 }),
+                        SetForegroundColor(item_col),
                         Print(format!("  {}{}", item, " ".repeat(padding))),
                         ResetColor,
-                        SetForegroundColor(Color::Rgb { r: 55, g: 62, b: 78 }),
+                        SetForegroundColor(border_col),
                         Print(" │"),
                         ResetColor,
                         Clear(ClearType::UntilNewLine),
@@ -709,11 +732,28 @@ impl LineEditor {
                 }
             }
 
+            // "↓ N more" line when there are hidden items.
+            let hidden = matches.len().saturating_sub(visible_count);
+            if hidden > 0 {
+                queue!(out, Print("\r\n"), MoveToColumn(0))?;
+                queue!(
+                    out,
+                    SetForegroundColor(border_col),
+                    Print("  │ "),
+                    SetForegroundColor(Color::Rgb { r: 120, g: 128, b: 150 }),
+                    Print(format!("  ↓ {} more{}", hidden, " ".repeat(box_inner.saturating_sub(10)))),
+                    SetForegroundColor(border_col),
+                    Print(" │"),
+                    ResetColor,
+                    Clear(ClearType::UntilNewLine),
+                )?;
+            }
+
             // Bottom border.
             queue!(out, Print("\r\n"), MoveToColumn(0))?;
             queue!(
                 out,
-                SetForegroundColor(Color::Rgb { r: 55, g: 62, b: 78 }),
+                SetForegroundColor(border_col),
                 Print(format!("  ╰{}╯", "─".repeat(box_inner))),
                 ResetColor,
                 Clear(ClearType::UntilNewLine),
@@ -766,15 +806,18 @@ impl LineEditor {
         };
         let cursor_col = cursor_abs_cols % term_width;
 
+        // The hints line adds one extra row below the text when input is empty.
+        let hints_extra = if hints_row { 1 } else { 0 };
+
         let rows_below_cursor =
-            visual_total_rows.saturating_sub(cursor_visual_row + 1) + dropdown_count;
+            visual_total_rows.saturating_sub(cursor_visual_row + 1) + dropdown_count + hints_extra;
         if rows_below_cursor > 0 {
             queue!(out, MoveUp(rows_below_cursor as u16))?;
         }
         queue!(out, MoveToColumn(cursor_col as u16))?;
 
         // Track state for next render.
-        sess.rendered_rows = dropdown_count + visual_total_rows;
+        sess.rendered_rows = dropdown_count + visual_total_rows + hints_extra;
         sess.cursor_row_offset = rows_below_cursor;
 
         out.flush()
@@ -800,12 +843,12 @@ impl LineEditor {
         // Print prompt + submitted text (newlines shown as ↵).
         execute!(
             out,
-            SetForegroundColor(Color::Rgb { r: 80, g: 200, b: 120 }),
+            SetForegroundColor(Color::Rgb { r: 138, g: 190, b: 183 }),
             SetAttribute(Attribute::Bold),
             Print(&self.prompt),
             ResetColor,
             SetAttribute(Attribute::Reset),
-            SetForegroundColor(Color::Rgb { r: 220, g: 225, b: 235 }),
+            SetForegroundColor(Color::Rgb { r: 212, g: 215, b: 222 }),
             Print(sess.text.replace('\n', " ↵ ")),
             ResetColor,
             Print("\r\n"),

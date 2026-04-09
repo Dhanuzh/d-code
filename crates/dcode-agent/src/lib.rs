@@ -1,6 +1,7 @@
 pub mod compact;
 pub mod prompt;
 pub mod session;
+pub mod skills;
 
 pub use compact::maybe_compact;
 

@@ -2,7 +2,7 @@
 use std::io::{self, BufRead, Write};
 use std::sync::Arc;
 
-use dcode_providers::{anthropic, copilot, openai, AuthStore};
+use dcode_providers::{anthropic, copilot, gemini, openai, openrouter, AuthStore};
 
 use crate::render;
 
@@ -158,6 +158,74 @@ pub async fn login_openai() -> anyhow::Result<()> {
     Ok(())
 }
 
+// ── Gemini ─────────────────────────────────────────────────────────────────────
+
+pub async fn login_gemini() -> anyhow::Result<()> {
+    if let Ok(store) = AuthStore::load() {
+        if store.gemini.is_some() {
+            render::print_info("Already logged in to Gemini. Use /logout gemini first to re-login.");
+            return Ok(());
+        }
+    }
+
+    println!();
+    render::print_section_header("Google Gemini login");
+    println!("  Get your free API key at:");
+    println!("  \x1b[4mhttps://aistudio.google.com/apikey\x1b[0m");
+    println!();
+    let _ = open_browser("https://aistudio.google.com/apikey");
+    print!("  Paste API key (AIza…): ");
+    io::stdout().flush()?;
+
+    let mut key = String::new();
+    io::stdin().lock().read_line(&mut key)?;
+    let key = key.trim();
+
+    if key.is_empty() {
+        anyhow::bail!("No API key provided — login cancelled");
+    }
+
+    gemini::save_api_key(key)?;
+    render::print_success("Gemini API key saved  ✓  (gemini-2.0-flash and others now available)");
+    Ok(())
+}
+
+// ── OpenRouter ─────────────────────────────────────────────────────────────────
+
+pub async fn login_openrouter() -> anyhow::Result<()> {
+    if let Ok(store) = AuthStore::load() {
+        if store.openrouter.is_some() {
+            render::print_info(
+                "Already logged in to OpenRouter. Use /logout openrouter first to re-login.",
+            );
+            return Ok(());
+        }
+    }
+
+    println!();
+    render::print_section_header("OpenRouter login");
+    println!("  Get your API key at:");
+    println!("  \x1b[4mhttps://openrouter.ai/keys\x1b[0m");
+    println!();
+    let _ = open_browser("https://openrouter.ai/keys");
+    print!("  Paste API key (sk-or-…): ");
+    io::stdout().flush()?;
+
+    let mut key = String::new();
+    io::stdin().lock().read_line(&mut key)?;
+    let key = key.trim();
+
+    if key.is_empty() {
+        anyhow::bail!("No API key provided — login cancelled");
+    }
+
+    openrouter::save_api_key(key)?;
+    render::print_success(
+        "OpenRouter API key saved  ✓  (100+ models including DeepSeek, Llama, Gemini now available)",
+    );
+    Ok(())
+}
+
 // ── Status ─────────────────────────────────────────────────────────────────────
 
 pub fn show_status() {
@@ -184,15 +252,27 @@ pub fn print_auth_table(store: &AuthStore) {
     } else {
         "\x1b[2m✗ not logged in\x1b[0m  run: d-code login copilot"
     };
-    let openai_status = if store.openai.is_some() {
+    let openai_status = if store.openai.is_some() || store.openai_oauth.is_some() {
         "\x1b[32m✓ logged in\x1b[0m   — gpt-4.1, gpt-4o, o3, o4-mini"
     } else {
         "\x1b[2m✗ not logged in\x1b[0m  run: d-code login openai"
+    };
+    let gemini_status = if store.gemini.is_some() {
+        "\x1b[32m✓ logged in\x1b[0m   — gemini-2.0-flash, 2.5-flash, 2.5-pro"
+    } else {
+        "\x1b[2m✗ not logged in\x1b[0m  run: d-code login gemini"
+    };
+    let openrouter_status = if store.openrouter.is_some() {
+        "\x1b[32m✓ logged in\x1b[0m   — deepseek, llama, gemini, gpt, 100+ models"
+    } else {
+        "\x1b[2m✗ not logged in\x1b[0m  run: d-code login openrouter"
     };
 
     println!("  │ anthropic    │ {}│", pad_to(anthropic_status, 42));
     println!("  │ copilot      │ {}│", pad_to(copilot_status, 42));
     println!("  │ openai       │ {}│", pad_to(openai_status, 42));
+    println!("  │ gemini       │ {}│", pad_to(gemini_status, 42));
+    println!("  │ openrouter   │ {}│", pad_to(openrouter_status, 42));
     println!("  └──────────────┴────────────────────────────────────────────┘");
     println!();
 }
@@ -210,15 +290,29 @@ pub fn logout(provider: &str) -> anyhow::Result<()> {
         }
         "openai" | "gpt" => {
             store.openai = None;
+            store.openai_oauth = None;
             render::print_success("Logged out from OpenAI.");
+        }
+        "gemini" | "google" => {
+            store.gemini = None;
+            render::print_success("Logged out from Gemini.");
+        }
+        "openrouter" | "or" => {
+            store.openrouter = None;
+            render::print_success("Logged out from OpenRouter.");
         }
         "all" => {
             store.anthropic = None;
             store.copilot = None;
             store.openai = None;
+            store.openai_oauth = None;
+            store.gemini = None;
+            store.openrouter = None;
             render::print_success("Logged out from all providers.");
         }
-        other => anyhow::bail!("Unknown provider: {other}. Use: anthropic, copilot, openai, all"),
+        other => anyhow::bail!(
+            "Unknown provider: {other}. Use: anthropic, copilot, openai, gemini, openrouter, all"
+        ),
     }
     store.save()?;
     Ok(())

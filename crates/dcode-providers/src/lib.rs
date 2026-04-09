@@ -1,7 +1,9 @@
 pub mod anthropic;
 pub mod copilot;
+pub mod gemini;
 pub mod oauth;
 pub mod openai;
+pub mod openrouter;
 pub mod provider;
 pub mod types;
 
@@ -36,6 +38,18 @@ pub fn model_catalog() -> &'static [ProviderModelCatalog] {
             default_model: openai::DEFAULT_MODEL,
             models: openai::SUPPORTED_MODELS,
         },
+        ProviderModelCatalog {
+            provider: "gemini",
+            aliases: &["google"],
+            default_model: gemini::DEFAULT_MODEL,
+            models: gemini::SUPPORTED_MODELS,
+        },
+        ProviderModelCatalog {
+            provider: "openrouter",
+            aliases: &["or"],
+            default_model: openrouter::DEFAULT_MODEL,
+            models: openrouter::SUPPORTED_MODELS,
+        },
     ]
 }
 
@@ -44,6 +58,8 @@ fn normalize_provider_name(name: &str) -> Option<&'static str> {
         "anthropic" | "claude" => Some("anthropic"),
         "copilot" | "github" => Some("copilot"),
         "openai" | "gpt" => Some("openai"),
+        "gemini" | "google" => Some("gemini"),
+        "openrouter" | "or" => Some("openrouter"),
         _ => None,
     }
 }
@@ -97,8 +113,12 @@ pub fn load_provider_with_model(
             "anthropic"
         } else if store.copilot.is_some() {
             "copilot"
-        } else if store.openai.is_some() {
+        } else if store.openai.is_some() || store.openai_oauth.is_some() {
             "openai"
+        } else if store.gemini.is_some() {
+            "gemini"
+        } else if store.openrouter.is_some() {
+            "openrouter"
         } else {
             "anthropic"
         }
@@ -125,6 +145,8 @@ pub fn load_provider_with_model(
         "openai" => Ok(Box::new(openai::OpenAIProvider::from_auth_with_model(
             model,
         )?)),
-        _ => anyhow::bail!("Unknown provider: {provider}. Use: anthropic, copilot, openai"),
+        "gemini" => Ok(Box::new(gemini::GeminiProvider::from_auth_with_model(model)?)),
+        "openrouter" => Ok(Box::new(openrouter::OpenRouterProvider::from_auth_with_model(model)?)),
+        _ => anyhow::bail!("Unknown provider: {provider}. Use: anthropic, copilot, openai, gemini, openrouter"),
     }
 }

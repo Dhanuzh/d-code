@@ -134,6 +134,12 @@ pub struct AuthStore {
     /// OAuth login via OpenAI device-code flow (preferred over api key).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub openai_oauth: Option<OpenAiOAuth>,
+    /// Google Gemini API key.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub gemini: Option<ProviderAuth>,
+    /// OpenRouter API key (access to 100+ models).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub openrouter: Option<ProviderAuth>,
 }
 
 /// Stored after a successful OpenAI device-code OAuth login.

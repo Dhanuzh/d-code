@@ -403,7 +403,10 @@ fn messages_to_oai(messages: &[Message]) -> Vec<serde_json::Value> {
             if !tool_calls.is_empty() {
                 msg["tool_calls"] = serde_json::json!(tool_calls);
             }
-            let mut result = vec![msg];
+            let mut result = vec![];
+            if !texts.is_empty() || !tool_calls.is_empty() {
+                result.push(msg);
+            }
             result.extend(out);
             result
         })

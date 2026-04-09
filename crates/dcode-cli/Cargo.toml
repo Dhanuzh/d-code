@@ -22,3 +22,5 @@ dcode-agent     = { path = "../dcode-agent" }
 
 clap      = { version = "4", features = ["derive", "color"] }
 crossterm = "0.28"
+reqwest.workspace = true
+base64.workspace  = true

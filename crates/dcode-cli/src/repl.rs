@@ -28,7 +28,7 @@ use dcode_providers::load_provider_with_model;
 use crate::{
     commands,
     input::{LineEditor, ReadOutcome},
-    login, render, sessions,
+    login, prompts, render, sessions,
 };
 
 // ─── Thinking spinner ─────────────────────────────────────────────────────────
@@ -45,18 +45,18 @@ impl Spinner {
         let handle = tokio::spawn(async move {
             // Braille frames for smooth spinner animation.
             let frames = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
-            // Shimmer: cycle green brightness to create a pulse on the spinner char.
+            // Shimmer: pulse through teal (C_ACCENT = #8abeb7) brightness levels.
             let shimmer: &[(u8, u8, u8)] = &[
-                (45, 95, 60),
-                (52, 120, 72),
-                (60, 148, 84),
-                (68, 170, 96),
-                (75, 190, 108),
-                (80, 200, 118),  // peak
-                (75, 188, 108),
-                (68, 165, 95),
-                (58, 138, 80),
-                (50, 108, 66),
+                (60, 110, 105),
+                (75, 135, 130),
+                (95, 155, 150),
+                (115, 170, 165),
+                (130, 182, 178),
+                (138, 190, 183),  // peak — #8abeb7
+                (128, 180, 173),
+                (108, 165, 158),
+                (88, 148, 142),
+                (70, 128, 122),
             ];
             let start = std::time::Instant::now();
             let mut i = 0usize;
@@ -71,7 +71,8 @@ impl Spinner {
                     format!("{:.0}s", secs)
                 };
                 let (sr, sg, sb) = shimmer[i % shimmer.len()];
-                print!("\r  \x1b[38;2;{sr};{sg};{sb}m{}\x1b[0m \x1b[38;2;90;98;118mthinking\x1b[0m  \x1b[38;2;55;62;76m{elapsed}\x1b[0m",
+                // spinner in teal shimmer · "thinking" in muted · elapsed in dim
+                print!("\r  \x1b[38;2;{sr};{sg};{sb}m{}\x1b[0m \x1b[38;2;128;128;128mthinking\x1b[0m  \x1b[38;2;102;102;102m{elapsed}\x1b[0m",
                     frames[i % frames.len()]);
                 let _ = std::io::stdout().flush();
                 tokio::time::sleep(std::time::Duration::from_millis(80)).await;
@@ -98,18 +99,25 @@ fn slash_completions() -> Vec<String> {
     vec![
         "/help".into(),
         "/status".into(),
+        "/model".into(),
+        "/new".into(),
+        "/sessions".into(),
+        "/resume".into(),
+        "/fork".into(),
+        "/tree".into(),
+        "/name".into(),
+        "/copy".into(),
+        "/share".into(),
         "/compact".into(),
         "/undo".into(),
         "/clear".into(),
         "/export".into(),
-        "/model".into(),
+        "/init".into(),
+        "/prompts".into(),
+        "/skills".into(),
         "/login".into(),
         "/logout".into(),
-        "/sessions".into(),
-        "/resume".into(),
-        "/new".into(),
         "/quit".into(),
-        "/init".into(),
     ]
 }
 
@@ -163,21 +171,24 @@ pub async fn run(cwd: PathBuf, provider_name: Option<String>) -> anyhow::Result<
     render::print_welcome_banner(&provider_info, &auth_store);
 
     let make_prompt = |info: &str, tokens: Option<u32>, cwd: &std::path::Path| -> String {
+        // Branch in amber (256-colour 179) — dim
         let branch = git_branch(cwd)
-            .map(|b| format!(" \x1b[2m\x1b[38;5;179m{b}\x1b[0m"))
+            .map(|b| format!(" \x1b[38;5;179m\x1b[2m{b}\x1b[0m"))
             .unwrap_or_default();
+        // Token count in dim gray
         match tokens {
             Some(t) if t > 0 => {
                 let display = if t >= 1_000_000 {
                     format!("{:.1}M", t as f64 / 1_000_000.0)
                 } else if t >= 1_000 {
-                    format!("{:.1}k", t as f64 / 1_000.0)
+                    format!("{:.0}k", t as f64 / 1_000.0)
                 } else {
                     format!("{}", t)
                 };
-                format!(" {}{} \x1b[2m[{}]\x1b[0m ▸ ", info, branch, display)
+                // info in accent teal, token count in dim, ▸ in accent
+                format!(" \x1b[38;2;138;190;183m{info}\x1b[0m{branch} \x1b[38;2;102;102;102m[{display}]\x1b[0m \x1b[38;2;138;190;183m▸\x1b[0m ")
             }
-            _ => format!(" {}{} ▸ ", info, branch),
+            _ => format!(" \x1b[38;2;138;190;183m{info}\x1b[0m{branch} \x1b[38;2;138;190;183m▸\x1b[0m "),
         }
     };
     let mut editor = LineEditor::new(make_prompt(&provider_info, None, &cwd), slash_completions());
@@ -185,24 +196,21 @@ pub async fn run(cwd: PathBuf, provider_name: Option<String>) -> anyhow::Result<
     let history_path = dcode_dir.join("history");
     load_history(&mut editor, &history_path);
 
-    // Offer to resume last session.
-    if let Some(last) = sessions::load_latest() {
-        if !last.messages.is_empty() {
-            let ago = time_ago(&last.updated_at);
-            let title = last.display_title().to_string();
-            render::print_info(&format!(
-                "Resume last session? \"{title}\"  ({} turns · {ago})  [y/N]",
-                last.turn_count
-            ));
-            if let Ok(ReadOutcome::Submit(ans)) = editor.read_line() {
-                if ans.trim().eq_ignore_ascii_case("y") {
-                    agent.session.messages = last.messages.clone();
-                    render::print_session_recap(&last.messages, 4);
-                    render::print_info(&format!("Resumed \"{title}\"  ({} turns)", last.turn_count));
-                }
-            }
-        }
+    // Load prompt templates and skills once at startup.
+    let templates = prompts::load_templates(&cwd);
+    if !templates.is_empty() {
+        render::print_info(&format!(
+            "{} prompt template(s) loaded  (use /template-name to expand)",
+            templates.len()
+        ));
     }
+    let skills = dcode_agent::skills::load_skills(&cwd);
+    if !skills.is_empty() {
+        render::print_info(&format!("{} skill(s) loaded", skills.len()));
+    }
+
+    // Track the current session id for live-saving and forking.
+    let mut current_session_id: Option<String> = None;
 
     loop {
         // Update prompt with token usage.
@@ -217,10 +225,13 @@ pub async fn run(cwd: PathBuf, provider_name: Option<String>) -> anyhow::Result<
             ReadOutcome::Exit => {
                 // Auto-save session on exit.
                 if !agent.session.messages.is_empty() {
-                    sessions::save(
+                    sessions::save_with_opts(
                         &provider_info,
                         &agent.session.messages,
                         agent.session.turn_count(),
+                        current_session_id.as_deref(),
+                        None,
+                        None,
                     );
                 }
                 render::print_info("Goodbye.");
@@ -238,6 +249,68 @@ pub async fn run(cwd: PathBuf, provider_name: Option<String>) -> anyhow::Result<
                 }
 
                 editor.push_history(&input);
+
+                // ── Prompt template expansion ────────────────────────────────
+                // Check if the input matches a prompt template before dispatching.
+                // Templates take precedence over unknown slash commands but not builtins.
+                if input.starts_with('/') {
+                    if let Some(expanded) = prompts::expand(&input, &templates) {
+                        // Template matched — treat expanded text as new input.
+                        let expanded = expanded.trim().to_string();
+                        if !expanded.is_empty() {
+                            render::print_info(&format!("  Template expanded ({} chars)", expanded.len()));
+                            // Re-dispatch as a regular user message (no command handling).
+                            let expanded_input = expand_at_mentions(&expanded, &cwd);
+                            println!();
+                            let mut md = render::MarkdownRenderer::new();
+                            let mut xml_filter = render::XmlFilter::new();
+                            let spinner = Spinner::start();
+                            let mut spinner_opt = Some(spinner);
+                            let mut tool_start_map: std::collections::HashMap<String, std::time::Instant> = std::collections::HashMap::new();
+                            let mut turn_divider_shown = false;
+                            let _ = agent.run_turn(&expanded_input, |ev| match ev {
+                                AgentEvent::TextDelta(t) => {
+                                    if let Some(sp) = spinner_opt.take() { sp.stop(); }
+                                    if !turn_divider_shown { turn_divider_shown = true; render::print_turn_divider(); }
+                                    let clean = xml_filter.push(&t);
+                                    if !clean.is_empty() { md.push(&clean); }
+                                }
+                                AgentEvent::ToolStart { name } => {
+                                    if let Some(sp) = spinner_opt.take() { sp.stop(); }
+                                    let leftover = xml_filter.flush(); if !leftover.is_empty() { md.push(&leftover); } md.flush();
+                                    tool_start_map.insert(name.clone(), std::time::Instant::now());
+                                    render::print_tool_start(&name);
+                                }
+                                AgentEvent::ToolDone { name, input: ti, result, is_error } => {
+                                    let elapsed_ms = tool_start_map.remove(&name).map(|t| t.elapsed().as_millis() as u64).unwrap_or(0);
+                                    render::print_tool_done(&name, &ti, &result, is_error, elapsed_ms);
+                                    spinner_opt = Some(Spinner::start());
+                                }
+                                AgentEvent::TokenUsage { .. } => {}
+                                AgentEvent::UserQuestion { .. } | AgentEvent::ConfirmBash { .. } => { if let Some(sp) = spinner_opt.take() { sp.stop(); } }
+                                AgentEvent::DoomLoop { tool } => { if let Some(sp) = spinner_opt.take() { sp.stop(); } render::print_error(&format!("Doom loop: '{tool}' called 3× with same args. Stopping.")); }
+                                AgentEvent::TurnDone => {
+                                    if let Some(sp) = spinner_opt.take() { sp.stop(); }
+                                    let leftover = xml_filter.flush(); if !leftover.is_empty() { md.push(&leftover); } md.flush(); println!();
+                                }
+                            }).await;
+                            render::print_turn_footer(
+                                agent.session.total_input_tokens,
+                                agent.session.total_output_tokens,
+                                agent.model_name(),
+                                agent.provider_context_window(),
+                                agent.session.estimated_tokens() as u32,
+                            );
+                            // Live-save after template turn.
+                            if !agent.session.messages.is_empty() {
+                                if let Some(id) = sessions::save_with_opts(&provider_info, &agent.session.messages, agent.session.turn_count(), current_session_id.as_deref(), None, None) {
+                                    current_session_id = Some(id);
+                                }
+                            }
+                        }
+                        continue;
+                    }
+                }
 
                 // ── Inline bash: ! = add to context, !! = silent ─────────────
                 if let Some(cmd) = input.strip_prefix("!!") {
@@ -309,14 +382,18 @@ pub async fn run(cwd: PathBuf, provider_name: Option<String>) -> anyhow::Result<
                     }
                     commands::CommandResult::NewSession => {
                         if !agent.session.messages.is_empty() {
-                            sessions::save(
+                            sessions::save_with_opts(
                                 &provider_info,
                                 &agent.session.messages,
                                 agent.session.turn_count(),
+                                current_session_id.as_deref(),
+                                None,
+                                None,
                             );
                             render::print_info("Session saved.");
                         }
                         agent.session = dcode_agent::Session::new();
+                        current_session_id = None;
                         render::print_info("New session started.");
                         continue;
                     }
@@ -344,10 +421,11 @@ pub async fn run(cwd: PathBuf, provider_name: Option<String>) -> anyhow::Result<
                                 let title = s.display_title();
                                 let preview = s.last_reply_preview();
                                 let ago = time_ago(&s.updated_at);
+                                let branch_mark = if s.parent_id.is_some() { " ⎇" } else { "" };
                                 if preview.is_empty() {
-                                    format!("{title}  [{} turns · {ago} · {}]", s.turn_count, s.provider_model)
+                                    format!("{title}{branch_mark}  [{} turns · {ago} · {}]", s.turn_count, s.provider_model)
                                 } else {
-                                    format!("{title}  ↳ {preview}  [{} turns · {ago}]", s.turn_count)
+                                    format!("{title}{branch_mark}  ↳ {preview}  [{} turns · {ago}]", s.turn_count)
                                 }
                             })
                             .collect();
@@ -356,13 +434,17 @@ pub async fn run(cwd: PathBuf, provider_name: Option<String>) -> anyhow::Result<
                             Some(idx) => {
                                 let selected = &list[idx];
                                 if !agent.session.messages.is_empty() {
-                                    sessions::save(
+                                    sessions::save_with_opts(
                                         &provider_info,
                                         &agent.session.messages,
                                         agent.session.turn_count(),
+                                        current_session_id.as_deref(),
+                                        None,
+                                        None,
                                     );
                                 }
                                 agent.session.messages = selected.messages.clone();
+                                current_session_id = Some(selected.id.clone());
                                 render::print_session_recap(&selected.messages, 4);
                                 render::print_info(&format!(
                                     "Resumed: \"{}\" ({} turns)",
@@ -380,13 +462,17 @@ pub async fn run(cwd: PathBuf, provider_name: Option<String>) -> anyhow::Result<
                             }
                             Some(selected) => {
                                 if !agent.session.messages.is_empty() {
-                                    sessions::save(
+                                    sessions::save_with_opts(
                                         &provider_info,
                                         &agent.session.messages,
                                         agent.session.turn_count(),
+                                        current_session_id.as_deref(),
+                                        None,
+                                        None,
                                     );
                                 }
                                 agent.session.messages = selected.messages.clone();
+                                current_session_id = Some(selected.id.clone());
                                 render::print_session_recap(&selected.messages, 4);
                                 render::print_info(&format!(
                                     "Resumed: \"{}\" ({} turns)",
@@ -394,6 +480,191 @@ pub async fn run(cwd: PathBuf, provider_name: Option<String>) -> anyhow::Result<
                                 ));
                             }
                         }
+                        continue;
+                    }
+                    commands::CommandResult::SetName { name } => {
+                        if name.is_empty() {
+                            render::print_info("Usage: /name <title>");
+                        } else if let Some(id) = &current_session_id {
+                            if sessions::set_display_name(id, &name) {
+                                render::print_info(&format!("Session named: \"{name}\""));
+                            } else {
+                                // Session not yet saved — save first.
+                                if !agent.session.messages.is_empty() {
+                                    if let Some(new_id) = sessions::save_with_opts(
+                                        &provider_info,
+                                        &agent.session.messages,
+                                        agent.session.turn_count(),
+                                        None,
+                                        Some(&name),
+                                        None,
+                                    ) {
+                                        current_session_id = Some(new_id);
+                                        render::print_info(&format!("Session named: \"{name}\""));
+                                    }
+                                } else {
+                                    render::print_info("No messages to save yet.");
+                                }
+                            }
+                        } else {
+                            // No session id yet — save now with name.
+                            if !agent.session.messages.is_empty() {
+                                if let Some(id) = sessions::save_with_opts(
+                                    &provider_info,
+                                    &agent.session.messages,
+                                    agent.session.turn_count(),
+                                    None,
+                                    Some(&name),
+                                    None,
+                                ) {
+                                    current_session_id = Some(id);
+                                    render::print_info(&format!("Session named: \"{name}\""));
+                                }
+                            } else {
+                                render::print_info("No messages yet — start chatting first.");
+                            }
+                        }
+                        continue;
+                    }
+                    commands::CommandResult::CopyLast => {
+                        use dcode_providers::{ContentBlock, Role};
+                        let last_text = agent.session.messages.iter().rev()
+                            .find(|m| m.role == Role::Assistant)
+                            .and_then(|m| {
+                                m.content.iter()
+                                    .filter_map(|b| if let ContentBlock::Text { text } = b { Some(text.as_str()) } else { None })
+                                    .find(|t| !t.trim().is_empty() && !t.starts_with('['))
+                            })
+                            .map(|s| s.to_string());
+                        if let Some(text) = last_text {
+                            if copy_to_clipboard(&text) {
+                                render::print_info(&format!("Copied {} chars to clipboard.", text.len()));
+                            } else {
+                                render::print_warning("Clipboard not available. Last message:");
+                                println!("{text}");
+                            }
+                        } else {
+                            render::print_info("No assistant message to copy.");
+                        }
+                        continue;
+                    }
+                    commands::CommandResult::Fork { turn } => {
+                        if agent.session.messages.is_empty() {
+                            render::print_info("No conversation to fork.");
+                        } else {
+                            // Save current session first.
+                            let parent_id = if let Some(id) = sessions::save_with_opts(
+                                &provider_info,
+                                &agent.session.messages,
+                                agent.session.turn_count(),
+                                current_session_id.as_deref(),
+                                None,
+                                None,
+                            ) {
+                                Some(id)
+                            } else {
+                                current_session_id.clone()
+                            };
+
+                            // Determine fork point.
+                            let all_msgs = &agent.session.messages;
+                            let fork_msgs = if let Some(t) = turn {
+                                // Count turns (user messages).
+                                let mut count = 0;
+                                let mut end = 0;
+                                for (i, msg) in all_msgs.iter().enumerate() {
+                                    if msg.role == dcode_providers::Role::User {
+                                        count += 1;
+                                        if count >= t {
+                                            end = i + 1;
+                                            break;
+                                        }
+                                    }
+                                }
+                                if end == 0 { end = all_msgs.len(); }
+                                all_msgs[..end].to_vec()
+                            } else {
+                                all_msgs.clone()
+                            };
+
+                            // Start new session with forked messages.
+                            let new_id = sessions::save_with_opts(
+                                &provider_info,
+                                &fork_msgs,
+                                fork_msgs.iter().filter(|m| m.role == dcode_providers::Role::User).count(),
+                                None,
+                                None,
+                                parent_id.as_deref(),
+                            );
+                            agent.session.messages = fork_msgs;
+                            current_session_id = new_id;
+                            render::print_info(&format!(
+                                "Forked: new session with {} turns (parent saved).",
+                                agent.session.turn_count()
+                            ));
+                        }
+                        continue;
+                    }
+                    commands::CommandResult::ShowTree => {
+                        let all = sessions::list();
+                        if all.is_empty() {
+                            render::print_info("No saved sessions.");
+                        } else {
+                            render::print_session_tree(&all, current_session_id.as_deref());
+                        }
+                        continue;
+                    }
+                    commands::CommandResult::Share => {
+                        if agent.session.messages.is_empty() {
+                            render::print_info("No conversation to share.");
+                        } else {
+                            share_session_as_gist(
+                                &agent.session.messages,
+                                &provider_info,
+                            ).await;
+                        }
+                        continue;
+                    }
+                    commands::CommandResult::ListPrompts => {
+                        if templates.is_empty() {
+                            render::print_info(
+                                "No prompt templates found. Place .md files in ~/.d-code/prompts/"
+                            );
+                        } else {
+                            println!();
+                            println!("  \x1b[1mPrompt templates\x1b[0m  (use /name [args] to expand)");
+                            println!();
+                            for t in &templates {
+                                let desc = if t.description.is_empty() {
+                                    "(no description)".to_string()
+                                } else {
+                                    t.description.clone()
+                                };
+                                println!("  \x1b[32m/{}\x1b[0m  —  {}", t.name, desc);
+                            }
+                            println!();
+                        }
+                        continue;
+                    }
+                    commands::CommandResult::ListSkills => {
+                        if skills.is_empty() {
+                            render::print_info(
+                                "No skills found. Place SKILL.md files in ~/.d-code/skills/<name>/"
+                            );
+                        } else {
+                            println!();
+                            println!("  \x1b[1mSkills\x1b[0m  (auto-loaded into system prompt)");
+                            println!();
+                            for s in &skills {
+                                println!("  \x1b[33m{}\x1b[0m  —  {}", s.name, s.description);
+                                println!("    {}", s.file_path.display());
+                            }
+                            println!();
+                        }
+                        continue;
+                    }
+                    commands::CommandResult::ExpandPrompt { .. } => {
+                        // Handled above before command dispatch.
                         continue;
                     }
                     commands::CommandResult::Login { provider } => {
@@ -408,8 +679,14 @@ pub async fn run(cwd: PathBuf, provider_name: Option<String>) -> anyhow::Result<
                             "openai" | "gpt" => {
                                 let _ = login::login_openai().await;
                             }
+                            "gemini" | "google" => {
+                                let _ = login::login_gemini().await;
+                            }
+                            "openrouter" | "or" => {
+                                let _ = login::login_openrouter().await;
+                            }
                             other => render::print_error(&format!(
-                                "Unknown provider '{other}'. Use: anthropic, copilot, openai"
+                                "Unknown provider '{other}'. Use: anthropic, copilot, openai, gemini, openrouter"
                             )),
                         }
                         continue;
@@ -441,13 +718,15 @@ pub async fn run(cwd: PathBuf, provider_name: Option<String>) -> anyhow::Result<
                         for m in agent.provider.list_models().await {
                             labels.push(format!("{}/{}", agent.provider.name(), m));
                         }
-                        let other_providers: Vec<&str> = ["anthropic", "copilot", "openai"]
+                        let other_providers: Vec<&str> = ["anthropic", "copilot", "openai", "gemini", "openrouter"]
                             .iter()
                             .filter(|&&p| p != agent.provider.name())
                             .filter(|&&p| match p {
-                                "anthropic" => store.anthropic.is_some(),
-                                "copilot"   => store.copilot.is_some(),
-                                "openai"    => store.openai.is_some() || store.openai_oauth.is_some(),
+                                "anthropic"   => store.anthropic.is_some(),
+                                "copilot"     => store.copilot.is_some(),
+                                "openai"      => store.openai.is_some() || store.openai_oauth.is_some(),
+                                "gemini"      => store.gemini.is_some() || std::env::var("GEMINI_API_KEY").is_ok(),
+                                "openrouter"  => store.openrouter.is_some() || std::env::var("OPENROUTER_API_KEY").is_ok(),
                                 _ => false,
                             })
                             .copied()
@@ -507,7 +786,6 @@ pub async fn run(cwd: PathBuf, provider_name: Option<String>) -> anyhow::Result<
                 let input = expand_at_mentions(&input, &cwd);
 
                 println!();
-                let tokens_before = agent.session.total_input_tokens + agent.session.total_output_tokens;
                 let mut md = render::MarkdownRenderer::new();
                 let mut xml_filter = render::XmlFilter::new();
                 let spinner = Spinner::start();
@@ -594,21 +872,27 @@ pub async fn run(cwd: PathBuf, provider_name: Option<String>) -> anyhow::Result<
                     render::print_error(&friendly_error(&format!("{e:#}")));
                 }
 
-                // Show per-turn cost hint.
-                let tokens_after = agent.session.total_input_tokens + agent.session.total_output_tokens;
-                let delta = tokens_after.saturating_sub(tokens_before);
-                if delta > 0 {
-                    print_turn_cost(delta, agent.model_name());
-                }
+                // Post-turn footer: token counts, cost, context %.
+                render::print_turn_footer(
+                    agent.session.total_input_tokens,
+                    agent.session.total_output_tokens,
+                    agent.model_name(),
+                    agent.provider_context_window(),
+                    agent.session.estimated_tokens() as u32,
+                );
 
-                // Context usage warning at 70% and 90%.
-                let ctx_used = agent.session.estimated_tokens();
-                let ctx_window = agent.provider_context_window() as usize;
-                let ctx_pct = (ctx_used as f64 * 100.0) / ctx_window as f64;
-                if ctx_pct >= 90.0 {
-                    render::print_warning("Context 90%+ full — run /compact now or start /new session.");
-                } else if ctx_pct >= 70.0 {
-                    render::print_warning(&format!("Context at {ctx_pct:.0}% — consider /compact soon."));
+                // Live-save after each turn.
+                if !agent.session.messages.is_empty() {
+                    if let Some(id) = sessions::save_with_opts(
+                        &provider_info,
+                        &agent.session.messages,
+                        agent.session.turn_count(),
+                        current_session_id.as_deref(),
+                        None,
+                        None,
+                    ) {
+                        current_session_id = Some(id);
+                    }
                 }
             }
         }
@@ -765,34 +1049,123 @@ fn export_session(
     }
 }
 
-// ─── Cost display ─────────────────────────────────────────────────────────────
+// ─── Clipboard ────────────────────────────────────────────────────────────────
 
-fn print_turn_cost(delta_tokens: u32, model: &str) {
-    // Very rough rates in $/M tokens; display only as orientation.
-    let (in_rate, out_rate) = if model.contains("opus") {
-        (15.0_f64, 75.0)
-    } else if model.contains("sonnet") {
-        (3.0, 15.0)
-    } else if model.contains("haiku") {
-        (0.8, 4.0)
-    } else if model.contains("gpt-4") {
-        (2.0, 8.0)
-    } else {
-        (1.0, 4.0)
-    };
-    // Assume ~70/30 input/output split as a rough heuristic.
-    let est = ((delta_tokens as f64 * 0.7) / 1_000_000.0) * in_rate
-        + ((delta_tokens as f64 * 0.3) / 1_000_000.0) * out_rate;
-    if est >= 0.0001 {
-        let tok_str = if delta_tokens >= 1000 {
-            format!("{:.1}k", delta_tokens as f64 / 1000.0)
-        } else {
-            delta_tokens.to_string()
+/// Copy text to the system clipboard. Returns true if successful.
+fn copy_to_clipboard(text: &str) -> bool {
+    // Try xclip, xsel, wl-copy, pbcopy in order.
+    let commands = [
+        ("xclip",    vec!["-selection", "clipboard"]),
+        ("xsel",     vec!["--clipboard", "--input"]),
+        ("wl-copy",  vec![]),
+        ("pbcopy",   vec![]),
+    ];
+    for (cmd, args) in &commands {
+        let mut proc = match std::process::Command::new(cmd)
+            .args(args)
+            .stdin(std::process::Stdio::piped())
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .spawn()
+        {
+            Ok(p) => p,
+            Err(_) => continue,
         };
-        println!(
-            "  \x1b[38;2;50;56;70m\x1b[2m{tok_str} tokens  ~${est:.4}\x1b[0m"
-        );
+        if let Some(stdin) = proc.stdin.as_mut() {
+            use std::io::Write;
+            let _ = stdin.write_all(text.as_bytes());
+        }
+        if proc.wait().map(|s| s.success()).unwrap_or(false) {
+            return true;
+        }
     }
+
+    // OSC 52 terminal escape sequence (works in many modern terminals).
+    use base64::Engine;
+    let encoded = base64::engine::general_purpose::STANDARD.encode(text.as_bytes());
+    print!("\x1b]52;c;{encoded}\x07");
+    let _ = std::io::stdout().flush();
+    true // optimistically assume OSC 52 works
+}
+
+// ─── Gist sharing ─────────────────────────────────────────────────────────────
+
+/// Share session as an anonymous GitHub gist. Prints the URL on success.
+async fn share_session_as_gist(
+    messages: &[dcode_providers::Message],
+    provider_info: &str,
+) {
+    use dcode_providers::{ContentBlock, Role};
+
+    // Build markdown content.
+    let mut md = format!("# d-code session — {provider_info}\n\n");
+    for msg in messages {
+        match msg.role {
+            Role::User => {
+                for block in &msg.content {
+                    if let ContentBlock::Text { text } = block {
+                        let t = text.trim();
+                        if !t.is_empty() && !t.starts_with('[') {
+                            md.push_str(&format!("**You:** {t}\n\n"));
+                        }
+                    }
+                }
+            }
+            Role::Assistant => {
+                for block in &msg.content {
+                    if let ContentBlock::Text { text } = block {
+                        let t = text.trim();
+                        if !t.is_empty() && !t.starts_with('[') {
+                            md.push_str(&format!("{t}\n\n"));
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    let body = serde_json::json!({
+        "description": format!("d-code session — {provider_info}"),
+        "public": false,
+        "files": {
+            "session.md": { "content": md }
+        }
+    });
+
+    let client = reqwest::Client::new();
+    match client
+        .post("https://api.github.com/gists")
+        .header("User-Agent", "d-code/0.1")
+        .header("Accept", "application/vnd.github+json")
+        .json(&body)
+        .send()
+        .await
+    {
+        Ok(resp) if resp.status().is_success() => {
+            if let Ok(v) = resp.json::<serde_json::Value>().await {
+                let url = v["html_url"].as_str().unwrap_or("(no URL)");
+                render::print_success(&format!("Shared: {url}"));
+                let _ = open_browser_share(url);
+            }
+        }
+        Ok(resp) => {
+            let status = resp.status();
+            render::print_error(&format!("GitHub API error {status}"));
+        }
+        Err(e) => {
+            render::print_error(&format!("Share failed: {e}"));
+        }
+    }
+}
+
+fn open_browser_share(url: &str) -> bool {
+    #[cfg(target_os = "linux")]
+    let _ = std::process::Command::new("xdg-open").arg(url).spawn();
+    #[cfg(target_os = "macos")]
+    let _ = std::process::Command::new("open").arg(url).spawn();
+    #[cfg(target_os = "windows")]
+    let _ = std::process::Command::new("cmd").args(["/c", "start", url]).spawn();
+    true
 }
 
 // ─── @mention expansion ───────────────────────────────────────────────────────
