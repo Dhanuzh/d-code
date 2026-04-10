@@ -84,7 +84,16 @@ pub async fn run(cwd: PathBuf, provider_name: Option<String>) -> anyhow::Result<
     // Clean up stale large-output tmp files in the background.
     tokio::spawn(async { dcode_tools::truncate::cleanup_old_tmp() });
 
-    let provider = load_provider_with_model(init_provider, init_model)?;
+    // Try loading the saved/preferred provider. If it fails (e.g. not logged in),
+    // fall back to auto-detect from available credentials rather than hard-erroring.
+    let provider = match load_provider_with_model(init_provider, init_model) {
+        Ok(p) => p,
+        Err(_) if init_provider.is_some() && provider_name.is_none() => {
+            // Saved preference is stale — auto-detect instead.
+            load_provider_with_model(None, None)?
+        }
+        Err(e) => return Err(e),
+    };
     let mut provider_info = format!("{}/{}", provider.name(), provider.model());
     let mut agent = Agent::new(provider, cwd.clone());
 
