@@ -51,7 +51,9 @@ impl Component for StaticLines {
     fn render(&mut self, _width: u16) -> Vec<Line> {
         self.lines.clone()
     }
-    fn is_dirty(&self) -> bool { false }
+    fn is_dirty(&self) -> bool {
+        false
+    }
 }
 
 /// A blank vertical spacer of N lines.
@@ -63,8 +65,12 @@ impl Component for Spacer {
     fn render(&mut self, _width: u16) -> Vec<Line> {
         vec![Line::plain(""); self.lines as usize]
     }
-    fn is_dirty(&self) -> bool { false }
-    fn height_hint(&self) -> Option<u16> { Some(self.lines) }
+    fn is_dirty(&self) -> bool {
+        false
+    }
+    fn height_hint(&self) -> Option<u16> {
+        Some(self.lines)
+    }
 }
 
 /// A horizontal rule (full-width line of a repeated character).
@@ -77,10 +83,20 @@ pub struct HRule {
 
 impl HRule {
     pub fn new(ch: char, style: impl Into<String>) -> Self {
-        Self { ch, style: Some(style.into()), dirty: true, last_width: 0 }
+        Self {
+            ch,
+            style: Some(style.into()),
+            dirty: true,
+            last_width: 0,
+        }
     }
     pub fn plain(ch: char) -> Self {
-        Self { ch, style: None, dirty: true, last_width: 0 }
+        Self {
+            ch,
+            style: None,
+            dirty: true,
+            last_width: 0,
+        }
     }
 }
 
@@ -96,7 +112,13 @@ impl Component for HRule {
         };
         vec![line]
     }
-    fn is_dirty(&self) -> bool { self.dirty }
-    fn mark_clean(&mut self) { self.dirty = false; }
-    fn height_hint(&self) -> Option<u16> { Some(1) }
+    fn is_dirty(&self) -> bool {
+        self.dirty
+    }
+    fn mark_clean(&mut self) {
+        self.dirty = false;
+    }
+    fn height_hint(&self) -> Option<u16> {
+        Some(1)
+    }
 }

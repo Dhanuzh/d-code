@@ -73,7 +73,9 @@ fn build_structured_summary(messages: &[Message]) -> String {
                                 user_messages.push(truncate(t, 200));
                             }
                         }
-                        ContentBlock::ToolResult { content, is_error, .. } => {
+                        ContentBlock::ToolResult {
+                            content, is_error, ..
+                        } => {
                             if *is_error {
                                 errors.push(truncate(content, 120));
                             }
@@ -95,8 +97,12 @@ fn build_structured_summary(messages: &[Message]) -> String {
                             let key = extract_key_arg(name, input);
                             if let Some(path) = extract_file_path(name, input) {
                                 match name.as_str() {
-                                    "write_file" | "edit_file" => { modified_files.insert(path); }
-                                    "read_file" => { read_files.insert(path.clone()); }
+                                    "write_file" | "edit_file" => {
+                                        modified_files.insert(path);
+                                    }
+                                    "read_file" => {
+                                        read_files.insert(path.clone());
+                                    }
                                     _ => {}
                                 }
                             }
@@ -140,7 +146,10 @@ fn build_structured_summary(messages: &[Message]) -> String {
             }
         }
         if tool_calls.len() > 20 {
-            out.push_str(&format!("- … and {} more tool calls\n", tool_calls.len() - 20));
+            out.push_str(&format!(
+                "- … and {} more tool calls\n",
+                tool_calls.len() - 20
+            ));
         }
         out.push('\n');
     }
@@ -164,7 +173,8 @@ fn build_structured_summary(messages: &[Message]) -> String {
     }
 
     // ── Read files (referenced this session) ─────────────────────────────────
-    let unmodified_reads: Vec<&String> = read_files.iter()
+    let unmodified_reads: Vec<&String> = read_files
+        .iter()
         .filter(|p| !modified_files.contains(*p))
         .collect();
     if !unmodified_reads.is_empty() {
@@ -198,9 +208,7 @@ fn extract_key_arg(tool: &str, input: &serde_json::Value) -> String {
 /// Try to extract a file path from a tool input, for the Relevant files section.
 fn extract_file_path(tool: &str, input: &serde_json::Value) -> Option<String> {
     match tool {
-        "read_file" | "write_file" | "edit_file" => {
-            input["path"].as_str().map(str::to_string)
-        }
+        "read_file" | "write_file" | "edit_file" => input["path"].as_str().map(str::to_string),
         _ => None,
     }
 }

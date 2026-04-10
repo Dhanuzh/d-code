@@ -34,7 +34,10 @@ pub enum AgentEvent {
     /// The agent detected a doom loop and stopped.
     DoomLoop { tool: String },
     /// The agent is asking the user a question (ask_user tool).
-    UserQuestion { question: String, choices: Vec<String> },
+    UserQuestion {
+        question: String,
+        choices: Vec<String>,
+    },
     /// The agent is about to run a dangerous bash command — shown before approval prompt.
     ConfirmBash { command: String },
     /// The agent turn is complete.
@@ -126,7 +129,11 @@ impl Agent {
         } else {
             &[]
         };
-        let max_iterations = if tools_for_turn.is_empty() { 1 } else { self.max_iterations };
+        let max_iterations = if tools_for_turn.is_empty() {
+            1
+        } else {
+            self.max_iterations
+        };
         let max_tokens = self.pick_max_tokens(user_input, tools_for_turn.is_empty());
 
         // Doom-loop tracker: (tool_name, canonical_input_json) → call_count.
@@ -180,7 +187,10 @@ impl Agent {
                             tool_calls.push(tc);
                         }
                     }
-                    StreamEvent::Usage { input_tokens, output_tokens } => {
+                    StreamEvent::Usage {
+                        input_tokens,
+                        output_tokens,
+                    } => {
                         self.session.record_usage(input_tokens, output_tokens);
                         on_event(AgentEvent::TokenUsage {
                             input: input_tokens,
@@ -232,7 +242,9 @@ impl Agent {
             }
 
             if let Some(tool_name) = doom_hit {
-                on_event(AgentEvent::DoomLoop { tool: tool_name.clone() });
+                on_event(AgentEvent::DoomLoop {
+                    tool: tool_name.clone(),
+                });
                 // Inject a note into the conversation so the model knows why we stopped.
                 self.session.push(Message {
                     role: Role::User,
@@ -310,7 +322,11 @@ impl Agent {
                     let question = tc.input["question"].as_str().unwrap_or("?");
                     let choices: Vec<String> = tc.input["choices"]
                         .as_array()
-                        .map(|a| a.iter().filter_map(|v| v.as_str().map(String::from)).collect())
+                        .map(|a| {
+                            a.iter()
+                                .filter_map(|v| v.as_str().map(String::from))
+                                .collect()
+                        })
                         .unwrap_or_default();
                     on_event(AgentEvent::UserQuestion {
                         question: question.to_string(),
@@ -335,7 +351,9 @@ impl Agent {
                     let danger = is_dangerous_bash(cmd);
                     let confirm_all = self.bash_approver.is_some() && !danger;
                     if danger || confirm_all {
-                        on_event(AgentEvent::ConfirmBash { command: cmd.to_string() });
+                        on_event(AgentEvent::ConfirmBash {
+                            command: cmd.to_string(),
+                        });
                         if let Some(ref approver) = self.bash_approver {
                             if !approver(cmd) {
                                 on_event(AgentEvent::ToolDone {
@@ -355,10 +373,11 @@ impl Agent {
                     }
                 }
 
-                let (result, is_error) = match dcode_tools::dispatch(&tc.name, &tc.input, &self.cwd).await {
-                    Ok(r) => (r, false),
-                    Err(e) => (format!("Error: {e}"), true),
-                };
+                let (result, is_error) =
+                    match dcode_tools::dispatch(&tc.name, &tc.input, &self.cwd).await {
+                        Ok(r) => (r, false),
+                        Err(e) => (format!("Error: {e}"), true),
+                    };
                 on_event(AgentEvent::ToolDone {
                     name: tc.name.clone(),
                     input: tc.input.clone(),
@@ -481,11 +500,21 @@ impl Agent {
 
         // Heavyweight code generation: raise ceiling to 8k.
         // These requests often produce large diffs or full implementations.
-        if ["refactor", "implement", "generate", "scaffold", "rewrite",
-            "full implementation", "complete everything", "entire", "all files",
-            "migrate", "overhaul"]
-            .iter()
-            .any(|k| text.contains(k))
+        if [
+            "refactor",
+            "implement",
+            "generate",
+            "scaffold",
+            "rewrite",
+            "full implementation",
+            "complete everything",
+            "entire",
+            "all files",
+            "migrate",
+            "overhaul",
+        ]
+        .iter()
+        .any(|k| text.contains(k))
             || user_input.len() > 2_000
         {
             return 8_192;
@@ -637,31 +666,116 @@ fn should_enable_tools(input: &str) -> bool {
     // These patterns strongly imply the user wants the agent to DO something.
     let action_hints = [
         // File operations
-        "file", "read", "write", "edit", "create", "open", "save", "delete",
+        "file",
+        "read",
+        "write",
+        "edit",
+        "create",
+        "open",
+        "save",
+        "delete",
         // Code work
-        "fix", "patch", "refactor", "implement", "add", "update", "remove", "change",
-        "rename", "move", "copy", "import",
+        "fix",
+        "patch",
+        "refactor",
+        "implement",
+        "add",
+        "update",
+        "remove",
+        "change",
+        "rename",
+        "move",
+        "copy",
+        "import",
         // Build/test/run
-        "test", "build", "run", "compile", "cargo", "npm", "yarn", "make", "lint",
-        "format", "check", "coverage", "install",
+        "test",
+        "build",
+        "run",
+        "compile",
+        "cargo",
+        "npm",
+        "yarn",
+        "make",
+        "lint",
+        "format",
+        "check",
+        "coverage",
+        "install",
         // Git
-        "git", "commit", "branch", "merge", "diff", "push", "pull", "clone", "stash",
+        "git",
+        "commit",
+        "branch",
+        "merge",
+        "diff",
+        "push",
+        "pull",
+        "clone",
+        "stash",
         // Search
-        "search", "grep", "find", "locate", "look for", "where is",
+        "search",
+        "grep",
+        "find",
+        "locate",
+        "look for",
+        "where is",
         // Debug
-        "bug", "error", "fail", "crash", "debug", "trace", "issue", "problem",
+        "bug",
+        "error",
+        "fail",
+        "crash",
+        "debug",
+        "trace",
+        "issue",
+        "problem",
         // Web
-        "fetch", "download", "url", "http", "browse", "web",
+        "fetch",
+        "download",
+        "url",
+        "http",
+        "browse",
+        "web",
         // Images/files by extension
-        ".rs", ".toml", ".json", ".py", ".ts", ".js", ".go", ".yaml", ".yml",
-        ".png", ".jpg", ".jpeg", ".gif", ".webp", ".md", ".txt", ".csv",
+        ".rs",
+        ".toml",
+        ".json",
+        ".py",
+        ".ts",
+        ".js",
+        ".go",
+        ".yaml",
+        ".yml",
+        ".png",
+        ".jpg",
+        ".jpeg",
+        ".gif",
+        ".webp",
+        ".md",
+        ".txt",
+        ".csv",
         // Paths
-        "src/", "crates/", "lib/", "bin/", "tests/", "docs/",
+        "src/",
+        "crates/",
+        "lib/",
+        "bin/",
+        "tests/",
+        "docs/",
         // Show/display
-        "show me", "list", "show", "display", "print", "tell me about",
+        "show me",
+        "list",
+        "show",
+        "display",
+        "print",
+        "tell me about",
         // Analysis
-        "analyze", "review", "optimize", "improve", "performance", "check",
-        "understand", "explain this", "what does this",
+        "analyze",
+        "review",
+        "optimize",
+        "improve",
+        "performance",
+        "check",
+        "understand",
+        "explain this",
+        "what does this",
     ];
 
     if action_hints.iter().any(|k| s.contains(k)) {
@@ -670,9 +784,15 @@ fn should_enable_tools(input: &str) -> bool {
 
     // Disable tools only for clearly abstract questions with no codebase context.
     let is_abstract_qa = [
-        "what is rust", "what is python", "what is a", "what is an",
-        "how does rust work", "how does async work", "tell me a joke",
-        "what are the benefits of", "why use rust",
+        "what is rust",
+        "what is python",
+        "what is a",
+        "what is an",
+        "how does rust work",
+        "how does async work",
+        "tell me a joke",
+        "what are the benefits of",
+        "why use rust",
     ]
     .iter()
     .any(|k| s.starts_with(k));
@@ -693,7 +813,9 @@ fn is_dangerous_bash(cmd: &str) -> bool {
         return true;
     }
     // Privilege escalation writing to system paths
-    if (c.contains("sudo") || c.contains("tee ")) && (c.contains("/etc/") || c.contains("/sys/") || c.contains("/dev/")) {
+    if (c.contains("sudo") || c.contains("tee "))
+        && (c.contains("/etc/") || c.contains("/sys/") || c.contains("/dev/"))
+    {
         return true;
     }
     // Pipe to shell (classic supply-chain attack vector)

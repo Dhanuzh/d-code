@@ -145,8 +145,14 @@ pub fn load_provider_with_model(
         "openai" => Ok(Box::new(openai::OpenAIProvider::from_auth_with_model(
             model,
         )?)),
-        "gemini" => Ok(Box::new(gemini::GeminiProvider::from_auth_with_model(model)?)),
-        "openrouter" => Ok(Box::new(openrouter::OpenRouterProvider::from_auth_with_model(model)?)),
-        _ => anyhow::bail!("Unknown provider: {provider}. Use: anthropic, copilot, openai, gemini, openrouter"),
+        "gemini" => Ok(Box::new(gemini::GeminiProvider::from_auth_with_model(
+            model,
+        )?)),
+        "openrouter" => Ok(Box::new(
+            openrouter::OpenRouterProvider::from_auth_with_model(model)?,
+        )),
+        _ => anyhow::bail!(
+            "Unknown provider: {provider}. Use: anthropic, copilot, openai, gemini, openrouter"
+        ),
     }
 }

@@ -7,7 +7,7 @@
 //! - Synchronized output to prevent flicker
 //! - 16ms render throttle (60fps cap)
 
-use std::io::{BufWriter, Write, stdout};
+use std::io::{stdout, BufWriter, Write};
 use std::time::{Duration, Instant};
 
 use crossterm::terminal;
@@ -255,5 +255,7 @@ impl Tui {
 }
 
 impl Default for Tui {
-    fn default() -> Self { Self::new() }
+    fn default() -> Self {
+        Self::new()
+    }
 }

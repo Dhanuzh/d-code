@@ -21,7 +21,9 @@ pub enum ReadOutcome {
     /// Ctrl-C on empty input, or Ctrl-D — exit.
     Exit,
     /// Ctrl-P (forward) / Ctrl-N (backward) — cycle to next/previous model.
-    CycleModel { forward: bool },
+    CycleModel {
+        forward: bool,
+    },
 }
 
 // ─── Raw mode guard ───────────────────────────────────────────────────────────
@@ -638,7 +640,11 @@ impl LineEditor {
         // Accent teal, matching pi-mono's primary color
         queue!(
             out,
-            SetForegroundColor(Color::Rgb { r: 138, g: 190, b: 183 }),
+            SetForegroundColor(Color::Rgb {
+                r: 138,
+                g: 190,
+                b: 183
+            }),
             SetAttribute(Attribute::Bold),
             Print(&self.prompt),
             ResetColor,
@@ -655,7 +661,11 @@ impl LineEditor {
             // Placeholder text.
             queue!(
                 out,
-                SetForegroundColor(Color::Rgb { r: 55, g: 60, b: 72 }),
+                SetForegroundColor(Color::Rgb {
+                    r: 55,
+                    g: 60,
+                    b: 72
+                }),
                 SetAttribute(Attribute::Italic),
                 Print("Message…"),
                 ResetColor,
@@ -663,9 +673,9 @@ impl LineEditor {
             )?;
             // Keybinding hints on a new line below (shown only when input is empty).
             // Pi-mono style: dim key + muted description pairs.
-            const DIM:   &str = "\x1b[38;2;102;102;102m";
+            const DIM: &str = "\x1b[38;2;102;102;102m";
             const MUTED: &str = "\x1b[38;2;128;128;128m";
-            const RST:   &str = "\x1b[0m";
+            const RST: &str = "\x1b[0m";
             let hints = format!(
                 "  {DIM}^C{RST} {MUTED}exit{RST}  {DIM}^G{RST} {MUTED}editor{RST}  \
                  {DIM}^P/N{RST} {MUTED}model{RST}  {DIM}Shift+↵{RST} {MUTED}newline{RST}  \
@@ -684,14 +694,22 @@ impl LineEditor {
                     // Continuation line indicator.
                     queue!(
                         out,
-                        SetForegroundColor(Color::Rgb { r: 60, g: 65, b: 78 }),
+                        SetForegroundColor(Color::Rgb {
+                            r: 60,
+                            g: 65,
+                            b: 78
+                        }),
                         Print("  ↳ "),
                         ResetColor,
                     )?;
                 }
                 queue!(
                     out,
-                    SetForegroundColor(Color::Rgb { r: 220, g: 225, b: 235 }),
+                    SetForegroundColor(Color::Rgb {
+                        r: 220,
+                        g: 225,
+                        b: 235
+                    }),
                     Print(line),
                     ResetColor,
                 )?;
@@ -704,7 +722,11 @@ impl LineEditor {
             if n_lines > 1 {
                 queue!(
                     out,
-                    SetForegroundColor(Color::Rgb { r: 60, g: 65, b: 78 }),
+                    SetForegroundColor(Color::Rgb {
+                        r: 60,
+                        g: 65,
+                        b: 78
+                    }),
                     Print(format!("  \x1b[2m[{n_lines} lines]\x1b[0m")),
                     ResetColor,
                 )?;
@@ -714,11 +736,28 @@ impl LineEditor {
         // ── Dropdown (boxed slash-command menu) ───────────────────────────────
         if !matches.is_empty() {
             // Compute box width from all visible items.
-            let max_item_len = matches.iter().take(visible_count).map(|s| s.len()).max().unwrap_or(4);
+            let max_item_len = matches
+                .iter()
+                .take(visible_count)
+                .map(|s| s.len())
+                .max()
+                .unwrap_or(4);
             let box_inner = max_item_len + 4; // "  item  "
-            let border_col = Color::Rgb { r: 75, g: 85, b: 110 };
-            let item_col   = Color::Rgb { r: 190, g: 195, b: 210 };
-            let sel_col    = Color::Rgb { r: 80, g: 200, b: 120 };
+            let border_col = Color::Rgb {
+                r: 75,
+                g: 85,
+                b: 110,
+            };
+            let item_col = Color::Rgb {
+                r: 190,
+                g: 195,
+                b: 210,
+            };
+            let sel_col = Color::Rgb {
+                r: 80,
+                g: 200,
+                b: 120,
+            };
 
             // Top border.
             queue!(out, Print("\r\n"), MoveToColumn(0))?;
@@ -773,8 +812,16 @@ impl LineEditor {
                     out,
                     SetForegroundColor(border_col),
                     Print("  │ "),
-                    SetForegroundColor(Color::Rgb { r: 120, g: 128, b: 150 }),
-                    Print(format!("  ↓ {} more{}", hidden, " ".repeat(box_inner.saturating_sub(10)))),
+                    SetForegroundColor(Color::Rgb {
+                        r: 120,
+                        g: 128,
+                        b: 150
+                    }),
+                    Print(format!(
+                        "  ↓ {} more{}",
+                        hidden,
+                        " ".repeat(box_inner.saturating_sub(10))
+                    )),
                     SetForegroundColor(border_col),
                     Print(" │"),
                     ResetColor,
@@ -875,10 +922,16 @@ impl LineEditor {
         self.erase(sess, out)?;
         // Print user message in pi-mono style: dark background, full-width highlight.
         let text = sess.text.replace('\n', " ↵ ");
-        let term_width = crossterm::terminal::size().map(|(w, _)| w as usize).unwrap_or(80);
+        let term_width = crossterm::terminal::size()
+            .map(|(w, _)| w as usize)
+            .unwrap_or(80);
         // Pad to terminal width for full-width background effect.
         let visible_len = text.chars().count() + 1; // +1 for leading space
-        let padding = if visible_len < term_width { " ".repeat(term_width - visible_len) } else { String::new() };
+        let padding = if visible_len < term_width {
+            " ".repeat(term_width - visible_len)
+        } else {
+            String::new()
+        };
         execute!(
             out,
             // userMessageBg #343541 = rgb(52,53,65), default fg (no explicit color = inherit terminal default)
@@ -897,8 +950,7 @@ fn open_in_editor(current: &str, out: &mut impl Write) -> io::Result<String> {
         .or_else(|_| std::env::var("EDITOR"))
         .unwrap_or_else(|_| "vi".to_string());
 
-    let tmp_path = std::env::temp_dir()
-        .join(format!("d-code-{}.md", std::process::id()));
+    let tmp_path = std::env::temp_dir().join(format!("d-code-{}.md", std::process::id()));
     std::fs::write(&tmp_path, current)?;
 
     // Release terminal for the editor.
@@ -918,8 +970,7 @@ fn open_in_editor(current: &str, out: &mut impl Write) -> io::Result<String> {
 
     let _ = status?;
 
-    let text = std::fs::read_to_string(&tmp_path)
-        .unwrap_or_else(|_| current.to_string());
+    let text = std::fs::read_to_string(&tmp_path).unwrap_or_else(|_| current.to_string());
     let _ = std::fs::remove_file(&tmp_path);
 
     // Strip trailing newline editors often append.

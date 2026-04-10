@@ -7,10 +7,10 @@
 use crate::{Component, Line};
 
 // Pi-mono dark theme colors
-const C_DIM:     &str = "\x1b[38;2;102;102;102m";   // dimGray #666666
-const C_WARNING: &str = "\x1b[38;2;255;255;0m";     // yellow  #ffff00
-const C_ERROR:   &str = "\x1b[38;2;204;102;102m";   // red     #cc6666
-const RESET:     &str = "\x1b[0m";
+const C_DIM: &str = "\x1b[38;2;102;102;102m"; // dimGray #666666
+const C_WARNING: &str = "\x1b[38;2;255;255;0m"; // yellow  #ffff00
+const C_ERROR: &str = "\x1b[38;2;204;102;102m"; // red     #cc6666
+const RESET: &str = "\x1b[0m";
 
 pub struct StatusBar {
     pub total_input: u32,
@@ -88,9 +88,13 @@ impl Component for StatusBar {
             0.0
         };
 
-        let ctx_color = if ctx_pct >= 90.0 { C_ERROR }
-            else if ctx_pct >= 70.0 { C_WARNING }
-            else { "" };  // default (no extra color, dimmed by wrapper)
+        let ctx_color = if ctx_pct >= 90.0 {
+            C_ERROR
+        } else if ctx_pct >= 70.0 {
+            C_WARNING
+        } else {
+            ""
+        }; // default (no extra color, dimmed by wrapper)
 
         // Stats: ↑in ↓out $cost ctx%/window
         let mut stat_parts: Vec<String> = Vec::new();
@@ -127,9 +131,15 @@ impl Component for StatusBar {
         vec![Line::raw(line1), Line::raw(line2)]
     }
 
-    fn is_dirty(&self) -> bool { self.dirty }
-    fn mark_clean(&mut self) { self.dirty = false; }
-    fn height_hint(&self) -> Option<u16> { Some(2) }
+    fn is_dirty(&self) -> bool {
+        self.dirty
+    }
+    fn mark_clean(&mut self) {
+        self.dirty = false;
+    }
+    fn height_hint(&self) -> Option<u16> {
+        Some(2)
+    }
 }
 
 fn fmt_tokens(n: u32) -> String {

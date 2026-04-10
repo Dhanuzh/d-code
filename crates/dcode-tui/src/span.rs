@@ -12,11 +12,17 @@ pub struct Span {
 
 impl Span {
     pub fn plain(text: impl Into<String>) -> Self {
-        Self { text: text.into(), style: None }
+        Self {
+            text: text.into(),
+            style: None,
+        }
     }
 
     pub fn styled(text: impl Into<String>, style: impl Into<String>) -> Self {
-        Self { text: text.into(), style: Some(style.into()) }
+        Self {
+            text: text.into(),
+            style: Some(style.into()),
+        }
     }
 
     /// RGB foreground color.

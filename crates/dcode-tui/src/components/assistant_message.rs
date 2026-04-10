@@ -7,14 +7,14 @@
 use crate::{Component, Line};
 
 // Pi-mono dark theme colors
-const C_TEXT:    &str = "\x1b[38;2;212;215;222m";
-const C_BOLD:    &str = "\x1b[38;2;240;198;116m"; // heading gold
-const C_CODE:    &str = "\x1b[38;2;138;190;183m"; // teal
-const C_BULLET:  &str = "\x1b[38;2;138;190;183m"; // teal
+const C_TEXT: &str = "\x1b[38;2;212;215;222m";
+const C_BOLD: &str = "\x1b[38;2;240;198;116m"; // heading gold
+const C_CODE: &str = "\x1b[38;2;138;190;183m"; // teal
+const C_BULLET: &str = "\x1b[38;2;138;190;183m"; // teal
 const C_HEADING: &str = "\x1b[38;2;240;198;116m"; // gold
 const C_SUCCESS: &str = "\x1b[38;2;181;189;104m"; // green
-const C_MUTED:   &str = "\x1b[38;2;128;128;128m";
-const RESET:     &str = "\x1b[0m";
+const C_MUTED: &str = "\x1b[38;2;128;128;128m";
+const RESET: &str = "\x1b[0m";
 
 /// Renders a streaming assistant message with markdown formatting.
 ///
@@ -159,12 +159,15 @@ impl AssistantMessage {
 }
 
 impl Default for AssistantMessage {
-    fn default() -> Self { Self::new() }
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl Component for AssistantMessage {
     fn render(&mut self, _width: u16) -> Vec<Line> {
-        let mut lines: Vec<Line> = self.complete_lines
+        let mut lines: Vec<Line> = self
+            .complete_lines
             .iter()
             .map(|s| Line::raw(s.clone()))
             .collect();
@@ -178,9 +181,13 @@ impl Component for AssistantMessage {
         lines
     }
 
-    fn is_dirty(&self) -> bool { self.dirty }
+    fn is_dirty(&self) -> bool {
+        self.dirty
+    }
 
-    fn mark_clean(&mut self) { self.dirty = false; }
+    fn mark_clean(&mut self) {
+        self.dirty = false;
+    }
 }
 
 /// Render inline markdown (bold, italic, inline code) to ANSI string.

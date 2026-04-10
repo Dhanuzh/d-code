@@ -10,18 +10,18 @@ fn time_ago(rfc3339: &str) -> String {
     let now = chrono::Local::now();
     let secs = (now.signed_duration_since(dt)).num_seconds();
     match secs {
-        s if s < 60      => "just now".into(),
-        s if s < 3600    => format!("{}m ago", s / 60),
-        s if s < 86400   => format!("{}h ago", s / 3600),
-        s if s < 604800  => format!("{}d ago", s / 86400),
-        s                => format!("{}w ago", s / 604800),
+        s if s < 60 => "just now".into(),
+        s if s < 3600 => format!("{}m ago", s / 60),
+        s if s < 86400 => format!("{}h ago", s / 3600),
+        s if s < 604800 => format!("{}d ago", s / 86400),
+        s => format!("{}w ago", s / 604800),
     }
 }
 
 use dcode_agent::{Agent, AgentEvent};
 use dcode_providers::load_provider_with_model;
-use dcode_tui::{AssistantMessage, Component, Spinner, ToolExecution, Tui};
 use dcode_tui::summarize_input;
+use dcode_tui::{AssistantMessage, Component, Spinner, ToolExecution, Tui};
 
 use crate::{
     commands,
@@ -98,9 +98,7 @@ pub async fn run(cwd: PathBuf, provider_name: Option<String>) -> anyhow::Result<
     // Wire up bash confirmation (dangerous commands always need approval;
     // confirm_bash:true in config also requires approval for all bash commands).
     let _confirm_all = config.confirm_bash;
-    agent.bash_approver = Some(Box::new(|cmd| {
-        render::confirm_dangerous_bash(cmd)
-    }));
+    agent.bash_approver = Some(Box::new(|cmd| render::confirm_dangerous_bash(cmd)));
 
     // Wire up ask_user prompter.
     agent.user_prompter = Some(Box::new(|question, choices| {
@@ -123,11 +121,13 @@ pub async fn run(cwd: PathBuf, provider_name: Option<String>) -> anyhow::Result<
         let all_providers = ["anthropic", "copilot", "openai", "gemini", "openrouter"];
         for p in all_providers {
             let authenticated = match p {
-                "anthropic"   => store.anthropic.is_some(),
-                "copilot"     => store.copilot.is_some(),
-                "openai"      => store.openai.is_some() || store.openai_oauth.is_some(),
-                "gemini"      => store.gemini.is_some() || std::env::var("GEMINI_API_KEY").is_ok(),
-                "openrouter"  => store.openrouter.is_some() || std::env::var("OPENROUTER_API_KEY").is_ok(),
+                "anthropic" => store.anthropic.is_some(),
+                "copilot" => store.copilot.is_some(),
+                "openai" => store.openai.is_some() || store.openai_oauth.is_some(),
+                "gemini" => store.gemini.is_some() || std::env::var("GEMINI_API_KEY").is_ok(),
+                "openrouter" => {
+                    store.openrouter.is_some() || std::env::var("OPENROUTER_API_KEY").is_ok()
+                }
                 _ => false,
             };
             if authenticated {
@@ -147,7 +147,9 @@ pub async fn run(cwd: PathBuf, provider_name: Option<String>) -> anyhow::Result<
             while crossterm::event::poll(std::time::Duration::ZERO).unwrap_or(false) {
                 let _ = crossterm::event::read();
             }
-            if let Some(idx) = render::select_interactive_with_current("Choose model:", &labels, None) {
+            if let Some(idx) =
+                render::select_interactive_with_current("Choose model:", &labels, None)
+            {
                 let label = &labels[idx];
                 if let Some((p, m)) = label.split_once('/') {
                     let new_provider = load_provider_with_model(Some(p), Some(m))?;
@@ -179,7 +181,9 @@ pub async fn run(cwd: PathBuf, provider_name: Option<String>) -> anyhow::Result<
                 // info in accent teal, token count in dim, ▸ in accent
                 format!(" \x1b[38;2;138;190;183m{info}\x1b[0m{branch} \x1b[38;2;102;102;102m[{display}]\x1b[0m \x1b[38;2;138;190;183m▸\x1b[0m ")
             }
-            _ => format!(" \x1b[38;2;138;190;183m{info}\x1b[0m{branch} \x1b[38;2;138;190;183m▸\x1b[0m "),
+            _ => format!(
+                " \x1b[38;2;138;190;183m{info}\x1b[0m{branch} \x1b[38;2;138;190;183m▸\x1b[0m "
+            ),
         }
     };
     let mut editor = LineEditor::new(make_prompt(&provider_info, None, &cwd), slash_completions());
@@ -208,7 +212,11 @@ pub async fn run(cwd: PathBuf, provider_name: Option<String>) -> anyhow::Result<
         let total_tokens = agent.session.total_input_tokens + agent.session.total_output_tokens;
         editor.set_prompt(make_prompt(
             &provider_info,
-            if total_tokens > 0 { Some(total_tokens) } else { None },
+            if total_tokens > 0 {
+                Some(total_tokens)
+            } else {
+                None
+            },
             &cwd,
         ));
 
@@ -230,7 +238,14 @@ pub async fn run(cwd: PathBuf, provider_name: Option<String>) -> anyhow::Result<
             }
             ReadOutcome::Cancel => continue,
             ReadOutcome::CycleModel { forward } => {
-                cycle_model(&mut agent, &mut editor, &mut provider_info, &dcode_dir, &cwd, forward)?;
+                cycle_model(
+                    &mut agent,
+                    &mut editor,
+                    &mut provider_info,
+                    &dcode_dir,
+                    &cwd,
+                    forward,
+                )?;
                 continue;
             }
             ReadOutcome::Submit(line) => {
@@ -249,7 +264,10 @@ pub async fn run(cwd: PathBuf, provider_name: Option<String>) -> anyhow::Result<
                         // Template matched — treat expanded text as new input.
                         let expanded = expanded.trim().to_string();
                         if !expanded.is_empty() {
-                            render::print_info(&format!("  Template expanded ({} chars)", expanded.len()));
+                            render::print_info(&format!(
+                                "  Template expanded ({} chars)",
+                                expanded.len()
+                            ));
                             let expanded_input = expand_at_mentions(&expanded, &cwd);
                             println!();
                             run_turn_with_tui(&mut agent, &expanded_input).await;
@@ -262,7 +280,14 @@ pub async fn run(cwd: PathBuf, provider_name: Option<String>) -> anyhow::Result<
                             );
                             // Live-save after template turn.
                             if !agent.session.messages.is_empty() {
-                                if let Some(id) = sessions::save_with_opts(&provider_info, &agent.session.messages, agent.session.turn_count(), current_session_id.as_deref(), None, None) {
+                                if let Some(id) = sessions::save_with_opts(
+                                    &provider_info,
+                                    &agent.session.messages,
+                                    agent.session.turn_count(),
+                                    current_session_id.as_deref(),
+                                    None,
+                                    None,
+                                ) {
                                     current_session_id = Some(id);
                                 }
                             }
@@ -323,11 +348,7 @@ pub async fn run(cwd: PathBuf, provider_name: Option<String>) -> anyhow::Result<
                     commands::CommandResult::Compact => {
                         let before = agent.session.estimated_tokens();
                         let ctx_window = agent.provider_context_window();
-                        dcode_agent::maybe_compact(
-                            &mut agent.session.messages,
-                            ctx_window,
-                            4,
-                        );
+                        dcode_agent::maybe_compact(&mut agent.session.messages, ctx_window, 4);
                         let after = agent.session.estimated_tokens();
                         render::print_info(&format!(
                             "Compacted: ~{before} → ~{after} tokens in context."
@@ -357,11 +378,7 @@ pub async fn run(cwd: PathBuf, provider_name: Option<String>) -> anyhow::Result<
                         continue;
                     }
                     commands::CommandResult::Export { path } => {
-                        export_session(
-                            &agent.session.messages,
-                            &provider_info,
-                            path.as_deref(),
-                        );
+                        export_session(&agent.session.messages, &provider_info, path.as_deref());
                         continue;
                     }
                     commands::CommandResult::Init => {
@@ -382,9 +399,15 @@ pub async fn run(cwd: PathBuf, provider_name: Option<String>) -> anyhow::Result<
                                 let ago = time_ago(&s.updated_at);
                                 let branch_mark = if s.parent_id.is_some() { " ⎇" } else { "" };
                                 if preview.is_empty() {
-                                    format!("{title}{branch_mark}  [{} turns · {ago} · {}]", s.turn_count, s.provider_model)
+                                    format!(
+                                        "{title}{branch_mark}  [{} turns · {ago} · {}]",
+                                        s.turn_count, s.provider_model
+                                    )
                                 } else {
-                                    format!("{title}{branch_mark}  ↳ {preview}  [{} turns · {ago}]", s.turn_count)
+                                    format!(
+                                        "{title}{branch_mark}  ↳ {preview}  [{} turns · {ago}]",
+                                        s.turn_count
+                                    )
                                 }
                             })
                             .collect();
@@ -435,7 +458,8 @@ pub async fn run(cwd: PathBuf, provider_name: Option<String>) -> anyhow::Result<
                                 render::print_session_recap(&selected.messages, 4);
                                 render::print_info(&format!(
                                     "Resumed: \"{}\" ({} turns)",
-                                    selected.display_title(), selected.turn_count
+                                    selected.display_title(),
+                                    selected.turn_count
                                 ));
                             }
                         }
@@ -487,17 +511,31 @@ pub async fn run(cwd: PathBuf, provider_name: Option<String>) -> anyhow::Result<
                     }
                     commands::CommandResult::CopyLast => {
                         use dcode_providers::{ContentBlock, Role};
-                        let last_text = agent.session.messages.iter().rev()
+                        let last_text = agent
+                            .session
+                            .messages
+                            .iter()
+                            .rev()
                             .find(|m| m.role == Role::Assistant)
                             .and_then(|m| {
-                                m.content.iter()
-                                    .filter_map(|b| if let ContentBlock::Text { text } = b { Some(text.as_str()) } else { None })
+                                m.content
+                                    .iter()
+                                    .filter_map(|b| {
+                                        if let ContentBlock::Text { text } = b {
+                                            Some(text.as_str())
+                                        } else {
+                                            None
+                                        }
+                                    })
                                     .find(|t| !t.trim().is_empty() && !t.starts_with('['))
                             })
                             .map(|s| s.to_string());
                         if let Some(text) = last_text {
                             if copy_to_clipboard(&text) {
-                                render::print_info(&format!("Copied {} chars to clipboard.", text.len()));
+                                render::print_info(&format!(
+                                    "Copied {} chars to clipboard.",
+                                    text.len()
+                                ));
                             } else {
                                 render::print_warning("Clipboard not available. Last message:");
                                 println!("{text}");
@@ -540,7 +578,9 @@ pub async fn run(cwd: PathBuf, provider_name: Option<String>) -> anyhow::Result<
                                         }
                                     }
                                 }
-                                if end == 0 { end = all_msgs.len(); }
+                                if end == 0 {
+                                    end = all_msgs.len();
+                                }
                                 all_msgs[..end].to_vec()
                             } else {
                                 all_msgs.clone()
@@ -550,7 +590,10 @@ pub async fn run(cwd: PathBuf, provider_name: Option<String>) -> anyhow::Result<
                             let new_id = sessions::save_with_opts(
                                 &provider_info,
                                 &fork_msgs,
-                                fork_msgs.iter().filter(|m| m.role == dcode_providers::Role::User).count(),
+                                fork_msgs
+                                    .iter()
+                                    .filter(|m| m.role == dcode_providers::Role::User)
+                                    .count(),
                                 None,
                                 None,
                                 parent_id.as_deref(),
@@ -577,21 +620,20 @@ pub async fn run(cwd: PathBuf, provider_name: Option<String>) -> anyhow::Result<
                         if agent.session.messages.is_empty() {
                             render::print_info("No conversation to share.");
                         } else {
-                            share_session_as_gist(
-                                &agent.session.messages,
-                                &provider_info,
-                            ).await;
+                            share_session_as_gist(&agent.session.messages, &provider_info).await;
                         }
                         continue;
                     }
                     commands::CommandResult::ListPrompts => {
                         if templates.is_empty() {
                             render::print_info(
-                                "No prompt templates found. Place .md files in ~/.d-code/prompts/"
+                                "No prompt templates found. Place .md files in ~/.d-code/prompts/",
                             );
                         } else {
                             println!();
-                            println!("  \x1b[1mPrompt templates\x1b[0m  (use /name [args] to expand)");
+                            println!(
+                                "  \x1b[1mPrompt templates\x1b[0m  (use /name [args] to expand)"
+                            );
                             println!();
                             for t in &templates {
                                 let desc = if t.description.is_empty() {
@@ -608,7 +650,7 @@ pub async fn run(cwd: PathBuf, provider_name: Option<String>) -> anyhow::Result<
                     commands::CommandResult::ListSkills => {
                         if skills.is_empty() {
                             render::print_info(
-                                "No skills found. Place SKILL.md files in ~/.d-code/skills/<name>/"
+                                "No skills found. Place SKILL.md files in ~/.d-code/skills/<name>/",
                             );
                         } else {
                             println!();
@@ -677,19 +719,28 @@ pub async fn run(cwd: PathBuf, provider_name: Option<String>) -> anyhow::Result<
                         for m in agent.provider.list_models().await {
                             labels.push(format!("{}/{}", agent.provider.name(), m));
                         }
-                        let other_providers: Vec<&str> = ["anthropic", "copilot", "openai", "gemini", "openrouter"]
-                            .iter()
-                            .filter(|&&p| p != agent.provider.name())
-                            .filter(|&&p| match p {
-                                "anthropic"   => store.anthropic.is_some(),
-                                "copilot"     => store.copilot.is_some(),
-                                "openai"      => store.openai.is_some() || store.openai_oauth.is_some(),
-                                "gemini"      => store.gemini.is_some() || std::env::var("GEMINI_API_KEY").is_ok(),
-                                "openrouter"  => store.openrouter.is_some() || std::env::var("OPENROUTER_API_KEY").is_ok(),
-                                _ => false,
-                            })
-                            .copied()
-                            .collect();
+                        let other_providers: Vec<&str> =
+                            ["anthropic", "copilot", "openai", "gemini", "openrouter"]
+                                .iter()
+                                .filter(|&&p| p != agent.provider.name())
+                                .filter(|&&p| match p {
+                                    "anthropic" => store.anthropic.is_some(),
+                                    "copilot" => store.copilot.is_some(),
+                                    "openai" => {
+                                        store.openai.is_some() || store.openai_oauth.is_some()
+                                    }
+                                    "gemini" => {
+                                        store.gemini.is_some()
+                                            || std::env::var("GEMINI_API_KEY").is_ok()
+                                    }
+                                    "openrouter" => {
+                                        store.openrouter.is_some()
+                                            || std::env::var("OPENROUTER_API_KEY").is_ok()
+                                    }
+                                    _ => false,
+                                })
+                                .copied()
+                                .collect();
                         for p in other_providers {
                             if let Ok(tmp) = load_provider_with_model(Some(p), None) {
                                 for m in tmp.list_models().await {
@@ -709,20 +760,25 @@ pub async fn run(cwd: PathBuf, provider_name: Option<String>) -> anyhow::Result<
 
                         let current = agent.provider_info();
                         let current_idx = labels.iter().position(|l| l == &current);
-                        match render::select_interactive_with_current("Switch model:", &labels, current_idx)
-                        {
+                        match render::select_interactive_with_current(
+                            "Switch model:",
+                            &labels,
+                            current_idx,
+                        ) {
                             None => {}
                             Some(idx) => {
                                 let label = &labels[idx];
                                 if label != &current {
                                     if let Some((p, m)) = label.split_once('/') {
                                         let provider = load_provider_with_model(Some(p), Some(m))?;
-                                        provider_info = format!("{}/{}", provider.name(), provider.model());
+                                        provider_info =
+                                            format!("{}/{}", provider.name(), provider.model());
                                         agent.replace_provider(provider);
                                         agent.refresh_system_prompt();
                                         editor.set_prompt(make_prompt(&provider_info, None, &cwd));
                                         save_model(&provider_info, &dcode_dir);
-                                        let fresh_store = dcode_providers::AuthStore::load().unwrap_or_default();
+                                        let fresh_store =
+                                            dcode_providers::AuthStore::load().unwrap_or_default();
                                         render::print_welcome_banner(&provider_info, &fresh_store);
                                     }
                                 }
@@ -810,7 +866,9 @@ async fn run_bash_inline(cmd: &str, add_to_context: bool, agent: &mut dcode_agen
             if add_to_context && !output.trim().is_empty() {
                 let ctx = format!("[User ran: {cmd}]\n{}", &output[..output.len().min(4_000)]);
                 agent.session.push(Message::user(ctx));
-                agent.session.push(Message::assistant("[Bash output noted]"));
+                agent
+                    .session
+                    .push(Message::assistant("[Bash output noted]"));
             }
         }
         Err(e) => render::print_error(&format!("{e}")),
@@ -827,7 +885,7 @@ async fn run_bash_inline(cmd: &str, add_to_context: bool, agent: &mut dcode_agen
 /// at ~60fps without bulk-paste bursts.
 async fn run_turn_with_tui(agent: &mut dcode_agent::Agent, input: &str) {
     use tokio::sync::mpsc::unbounded_channel;
-    use tokio::time::{Duration, MissedTickBehavior, interval};
+    use tokio::time::{interval, Duration, MissedTickBehavior};
 
     let mut tui = Tui::new();
     let mut xml_filter = render::XmlFilter::new();
@@ -845,13 +903,19 @@ async fn run_turn_with_tui(agent: &mut dcode_agent::Agent, input: &str) {
             let mut _lines: Vec<String> = Vec::new();
             // Spinner is NOT included here — it renders as a bottom-right overlay instead.
             for tool in completed_tools.iter_mut() {
-                for mut l in tool.render(width) { _lines.push(l.render().to_string()); }
+                for mut l in tool.render(width) {
+                    _lines.push(l.render().to_string());
+                }
             }
             for tool in active_tools.iter_mut() {
-                for mut l in tool.render(width) { _lines.push(l.render().to_string()); }
+                for mut l in tool.render(width) {
+                    _lines.push(l.render().to_string());
+                }
             }
             if let Some(msg) = assistant.as_mut() {
-                for mut l in msg.render(width) { _lines.push(l.render().to_string()); }
+                for mut l in msg.render(width) {
+                    _lines.push(l.render().to_string());
+                }
             }
             _lines
         }};
@@ -869,7 +933,9 @@ async fn run_turn_with_tui(agent: &mut dcode_agent::Agent, input: &str) {
 
     let mut agent_fut = Box::pin(agent.run_turn(input, {
         let tx = tx.clone();
-        move |ev| { let _ = tx.send(ev); }
+        move |ev| {
+            let _ = tx.send(ev);
+        }
     }));
 
     // 16ms tick (~60fps) drives spinner animation and flushes pending text frames.
@@ -1023,10 +1089,7 @@ fn clear_spinner_br() {
     let clear_width: u16 = 28;
     let col = cols.saturating_sub(clear_width).max(1);
     let blanks = " ".repeat(clear_width as usize);
-    let _ = write!(
-        std::io::stdout(),
-        "\x1b7\x1b[{rows};{col}H{blanks}\x1b8"
-    );
+    let _ = write!(std::io::stdout(), "\x1b7\x1b[{rows};{col}H{blanks}\x1b8");
     let _ = std::io::stdout().flush();
 }
 
@@ -1067,7 +1130,9 @@ fn cycle_model(
         Ok(provider) => {
             *provider_info = format!("{}/{}", provider.name(), provider.model());
             agent.replace_provider(provider);
-            let branch = git_branch(cwd).map(|b| format!(" \x1b[2m\x1b[38;5;179m{b}\x1b[0m")).unwrap_or_default();
+            let branch = git_branch(cwd)
+                .map(|b| format!(" \x1b[2m\x1b[38;5;179m{b}\x1b[0m"))
+                .unwrap_or_default();
             editor.set_prompt(format!(" {}{} ▸ ", provider_info, branch));
             save_model(provider_info, dcode_dir);
             render::print_info(&format!("Switched to {provider_info}"));
@@ -1079,11 +1144,7 @@ fn cycle_model(
 
 // ─── Session export ────────────────────────────────────────────────────────────
 
-fn export_session(
-    messages: &[dcode_providers::Message],
-    provider_info: &str,
-    path: Option<&str>,
-) {
+fn export_session(messages: &[dcode_providers::Message], provider_info: &str, path: Option<&str>) {
     use dcode_providers::{ContentBlock, Role};
 
     let out_path = path.unwrap_or("session.md");
@@ -1112,7 +1173,11 @@ fn export_session(
                     }
                     if let ContentBlock::ToolUse { name, input, .. } = block {
                         let args = serde_json::to_string(input).unwrap_or_default();
-                        let short = if args.len() > 80 { format!("{}…", &args[..80]) } else { args };
+                        let short = if args.len() > 80 {
+                            format!("{}…", &args[..80])
+                        } else {
+                            args
+                        };
                         out.push_str(&format!("*Tool: `{name}({short})`*\n\n"));
                     }
                 }
@@ -1132,10 +1197,10 @@ fn export_session(
 fn copy_to_clipboard(text: &str) -> bool {
     // Try xclip, xsel, wl-copy, pbcopy in order.
     let commands = [
-        ("xclip",    vec!["-selection", "clipboard"]),
-        ("xsel",     vec!["--clipboard", "--input"]),
-        ("wl-copy",  vec![]),
-        ("pbcopy",   vec![]),
+        ("xclip", vec!["-selection", "clipboard"]),
+        ("xsel", vec!["--clipboard", "--input"]),
+        ("wl-copy", vec![]),
+        ("pbcopy", vec![]),
     ];
     for (cmd, args) in &commands {
         let mut proc = match std::process::Command::new(cmd)
@@ -1168,10 +1233,7 @@ fn copy_to_clipboard(text: &str) -> bool {
 // ─── Gist sharing ─────────────────────────────────────────────────────────────
 
 /// Share session as an anonymous GitHub gist. Prints the URL on success.
-async fn share_session_as_gist(
-    messages: &[dcode_providers::Message],
-    provider_info: &str,
-) {
+async fn share_session_as_gist(messages: &[dcode_providers::Message], provider_info: &str) {
     use dcode_providers::{ContentBlock, Role};
 
     // Build markdown content.
@@ -1241,7 +1303,9 @@ fn open_browser_share(url: &str) -> bool {
     #[cfg(target_os = "macos")]
     let _ = std::process::Command::new("open").arg(url).spawn();
     #[cfg(target_os = "windows")]
-    let _ = std::process::Command::new("cmd").args(["/c", "start", url]).spawn();
+    let _ = std::process::Command::new("cmd")
+        .args(["/c", "start", url])
+        .spawn();
     true
 }
 
@@ -1254,7 +1318,9 @@ fn expand_at_mentions(input: &str, cwd: &std::path::Path) -> String {
     let mut clean = input.to_string();
 
     for word in input.split_whitespace() {
-        let Some(path_str) = word.strip_prefix('@') else { continue };
+        let Some(path_str) = word.strip_prefix('@') else {
+            continue;
+        };
         // Only treat as file path if it has a path separator or extension.
         if path_str.is_empty() || (!path_str.contains('/') && !path_str.contains('.')) {
             continue;
@@ -1307,7 +1373,9 @@ fn init_project(cwd: &std::path::Path) {
     }
 
     let mut content = String::from("# Project Context for d-code\n\n");
-    content.push_str("<!-- Auto-generated by /init — edit freely to add project-specific guidance. -->\n\n");
+    content.push_str(
+        "<!-- Auto-generated by /init — edit freely to add project-specific guidance. -->\n\n",
+    );
 
     // Stack detection.
     let stack = init_detect_stack(cwd);
@@ -1333,7 +1401,10 @@ fn init_project(cwd: &std::path::Path) {
 
     // Git info.
     if let Ok(branch_bytes) = std::fs::read_to_string(cwd.join(".git").join("HEAD")) {
-        let branch = branch_bytes.trim().strip_prefix("ref: refs/heads/").unwrap_or(branch_bytes.trim());
+        let branch = branch_bytes
+            .trim()
+            .strip_prefix("ref: refs/heads/")
+            .unwrap_or(branch_bytes.trim());
         content.push_str(&format!("## Git\nDefault branch: `{branch}`\n\n"));
     }
 
@@ -1358,10 +1429,15 @@ fn init_detect_stack(cwd: &std::path::Path) -> Vec<String> {
         stacks.push("Rust — `cargo build` · `cargo test` · `cargo clippy`".to_string());
     }
     if cwd.join("package.json").exists() {
-        let pm = if cwd.join("bun.lockb").exists() || cwd.join("bun.lock").exists() { "bun" }
-            else if cwd.join("pnpm-lock.yaml").exists() { "pnpm" }
-            else if cwd.join("yarn.lock").exists() { "yarn" }
-            else { "npm" };
+        let pm = if cwd.join("bun.lockb").exists() || cwd.join("bun.lock").exists() {
+            "bun"
+        } else if cwd.join("pnpm-lock.yaml").exists() {
+            "pnpm"
+        } else if cwd.join("yarn.lock").exists() {
+            "yarn"
+        } else {
+            "npm"
+        };
         stacks.push(format!("Node.js / {pm} — `{pm} run build` · `{pm} test`"));
     }
     if cwd.join("pyproject.toml").exists() || cwd.join("requirements.txt").exists() {
@@ -1380,17 +1456,32 @@ fn init_detect_stack(cwd: &std::path::Path) -> Vec<String> {
 }
 
 fn init_list_structure(dir: &std::path::Path, depth: usize, max_depth: usize) -> String {
-    const SKIP: &[&str] = &["target", "node_modules", ".git", ".cache", "dist", "build", "__pycache__", ".next"];
+    const SKIP: &[&str] = &[
+        "target",
+        "node_modules",
+        ".git",
+        ".cache",
+        "dist",
+        "build",
+        "__pycache__",
+        ".next",
+    ];
     let indent = "  ".repeat(depth);
     let mut out = String::new();
-    let Ok(entries) = std::fs::read_dir(dir) else { return out };
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return out;
+    };
     let mut entries: Vec<_> = entries.filter_map(|e| e.ok()).collect();
     entries.sort_by_key(|e| e.file_name());
     for entry in entries {
         let name = entry.file_name();
         let name_str = name.to_string_lossy();
-        if name_str.starts_with('.') && name_str != ".d-code" { continue; }
-        if SKIP.contains(&name_str.as_ref()) { continue; }
+        if name_str.starts_with('.') && name_str != ".d-code" {
+            continue;
+        }
+        if SKIP.contains(&name_str.as_ref()) {
+            continue;
+        }
         let path = entry.path();
         if path.is_dir() {
             out.push_str(&format!("{indent}{name_str}/\n"));
@@ -1458,8 +1549,12 @@ struct DcodeConfig {
 impl DcodeConfig {
     fn load(dcode_dir: &std::path::Path) -> Self {
         let path = dcode_dir.join("config.json");
-        let Ok(content) = std::fs::read_to_string(&path) else { return Self::default() };
-        let Ok(v) = serde_json::from_str::<serde_json::Value>(&content) else { return Self::default() };
+        let Ok(content) = std::fs::read_to_string(&path) else {
+            return Self::default();
+        };
+        let Ok(v) = serde_json::from_str::<serde_json::Value>(&content) else {
+            return Self::default();
+        };
         Self {
             confirm_bash: v["confirm_bash"].as_bool().unwrap_or(false),
         }

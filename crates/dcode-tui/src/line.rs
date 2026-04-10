@@ -22,7 +22,11 @@ impl Line {
 
     /// Build from a vec of spans.
     pub fn from_spans(spans: Vec<Span>) -> Self {
-        Self { spans, cached: None, cached_width: None }
+        Self {
+            spans,
+            cached: None,
+            cached_width: None,
+        }
     }
 
     /// Single plain-text line.
@@ -78,11 +82,15 @@ impl Line {
 }
 
 impl From<&str> for Line {
-    fn from(s: &str) -> Self { Line::plain(s) }
+    fn from(s: &str) -> Self {
+        Line::plain(s)
+    }
 }
 
 impl From<String> for Line {
-    fn from(s: String) -> Self { Line::plain(s) }
+    fn from(s: String) -> Self {
+        Line::plain(s)
+    }
 }
 
 /// Approximate visible width of a string containing ANSI escape codes,
@@ -101,7 +109,9 @@ pub fn strip_ansi(s: &str) -> String {
             // Skip until 'm' (color), 'A'–'H' (cursor), 'J', 'K' (erase)
             while let Some(&next) = chars.peek() {
                 chars.next();
-                if next.is_ascii_alphabetic() { break; }
+                if next.is_ascii_alphabetic() {
+                    break;
+                }
             }
         } else {
             out.push(ch);

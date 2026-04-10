@@ -5,22 +5,22 @@
 //!   Done     → toolSuccessBg  #283228
 //!   Error    → toolErrorBg    #3c2828
 
-use std::time::Instant;
 use crate::{Component, Line};
+use std::time::Instant;
 
 // Background colors (pi-mono dark.json)
-const BG_PENDING: &str = "\x1b[48;2;40;40;50m";    // toolPendingBg  #282832
-const BG_SUCCESS: &str = "\x1b[48;2;40;50;40m";    // toolSuccessBg  #283228
-const BG_ERROR:   &str = "\x1b[48;2;60;40;40m";    // toolErrorBg    #3c2828
+const BG_PENDING: &str = "\x1b[48;2;40;40;50m"; // toolPendingBg  #282832
+const BG_SUCCESS: &str = "\x1b[48;2;40;50;40m"; // toolSuccessBg  #283228
+const BG_ERROR: &str = "\x1b[48;2;60;40;40m"; // toolErrorBg    #3c2828
 
 // Foreground colors
-const C_ACCENT:  &str = "\x1b[38;2;138;190;183m";  // accent teal
-const C_SUCCESS: &str = "\x1b[38;2;181;189;104m";  // green
-const C_ERROR:   &str = "\x1b[38;2;204;102;102m";  // red
-const C_MUTED:   &str = "\x1b[38;2;128;128;128m";  // gray
-const C_DIM:     &str = "\x1b[38;2;102;102;102m";  // dimGray
-const RESET:     &str = "\x1b[0m";
-const BOLD:      &str = "\x1b[1m";
+const C_ACCENT: &str = "\x1b[38;2;138;190;183m"; // accent teal
+const C_SUCCESS: &str = "\x1b[38;2;181;189;104m"; // green
+const C_ERROR: &str = "\x1b[38;2;204;102;102m"; // red
+const C_MUTED: &str = "\x1b[38;2;128;128;128m"; // gray
+const C_DIM: &str = "\x1b[38;2;102;102;102m"; // dimGray
+const RESET: &str = "\x1b[0m";
+const BOLD: &str = "\x1b[1m";
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum ToolStatus {
@@ -53,8 +53,17 @@ impl ToolExecution {
         }
     }
 
-    pub fn finish(&mut self, output: impl Into<String>, is_error: bool, input_summary: impl Into<String>) {
-        self.status = if is_error { ToolStatus::Error } else { ToolStatus::Done };
+    pub fn finish(
+        &mut self,
+        output: impl Into<String>,
+        is_error: bool,
+        input_summary: impl Into<String>,
+    ) {
+        self.status = if is_error {
+            ToolStatus::Error
+        } else {
+            ToolStatus::Done
+        };
         self.elapsed_ms = self.started_at.elapsed().as_millis() as u64;
         self.output_preview = truncate_preview(output.into());
         self.input_summary = input_summary.into();
@@ -138,8 +147,12 @@ impl Component for ToolExecution {
         lines.into_iter().map(|s| Line::raw(s)).collect()
     }
 
-    fn is_dirty(&self) -> bool { self.dirty }
-    fn mark_clean(&mut self) { self.dirty = false; }
+    fn is_dirty(&self) -> bool {
+        self.dirty
+    }
+    fn mark_clean(&mut self) {
+        self.dirty = false;
+    }
 }
 
 /// Apply background color to a content string and pad to full terminal width.
@@ -192,7 +205,11 @@ pub fn summarize_input(name: &str, input: &serde_json::Value) -> String {
         "bash" | "run_bash" => {
             let cmd = input["command"].as_str().unwrap_or("");
             let truncated = cmd.chars().take(60).collect::<String>();
-            if cmd.len() > 60 { format!("{truncated}…") } else { truncated }
+            if cmd.len() > 60 {
+                format!("{truncated}…")
+            } else {
+                truncated
+            }
         }
         "grep" | "search" => input["pattern"].as_str().unwrap_or("").to_string(),
         "glob" | "list_files" => input["pattern"].as_str().unwrap_or("").to_string(),

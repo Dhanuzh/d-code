@@ -91,21 +91,22 @@ pub fn save_with_opts(
     let title = extract_title(messages);
 
     // Load existing session to preserve created_at and display_name if updating.
-    let (created_at, existing_display_name, existing_parent_id) =
-        if let Some(eid) = existing_id {
-            if let Some(old) = load(eid) {
-                (old.created_at, old.display_name, old.parent_id)
-            } else {
-                (now.to_rfc3339(), None, None)
-            }
+    let (created_at, existing_display_name, existing_parent_id) = if let Some(eid) = existing_id {
+        if let Some(old) = load(eid) {
+            (old.created_at, old.display_name, old.parent_id)
         } else {
             (now.to_rfc3339(), None, None)
-        };
+        }
+    } else {
+        (now.to_rfc3339(), None, None)
+    };
 
     let session = SavedSession {
         id: id.clone(),
         title,
-        display_name: display_name.map(|s| s.to_string()).or(existing_display_name),
+        display_name: display_name
+            .map(|s| s.to_string())
+            .or(existing_display_name),
         provider_model: provider_model.to_string(),
         messages: messages.to_vec(),
         turn_count,
@@ -126,9 +127,17 @@ pub fn save_with_opts(
 /// Update only the display_name field of an existing session.
 pub fn set_display_name(id: &str, name: &str) -> bool {
     let path = sessions_dir().join(format!("{}.json", id));
-    let Ok(data) = std::fs::read_to_string(&path) else { return false };
-    let Ok(mut session) = serde_json::from_str::<SavedSession>(&data) else { return false };
-    session.display_name = if name.is_empty() { None } else { Some(name.to_string()) };
+    let Ok(data) = std::fs::read_to_string(&path) else {
+        return false;
+    };
+    let Ok(mut session) = serde_json::from_str::<SavedSession>(&data) else {
+        return false;
+    };
+    session.display_name = if name.is_empty() {
+        None
+    } else {
+        Some(name.to_string())
+    };
     let now = chrono::Local::now();
     session.updated_at = now.to_rfc3339();
     if let Ok(new_data) = serde_json::to_string(&session) {
@@ -213,11 +222,7 @@ fn truncate_str(s: &str, max: usize) -> String {
     if count <= max {
         s.to_string()
     } else {
-        let end: usize = s
-            .char_indices()
-            .nth(max)
-            .map(|(i, _)| i)
-            .unwrap_or(s.len());
+        let end: usize = s.char_indices().nth(max).map(|(i, _)| i).unwrap_or(s.len());
         format!("{}…", &s[..end])
     }
 }

@@ -15,8 +15,8 @@ pub fn read_image(path: &str) -> anyhow::Result<String> {
         .map(str::to_lowercase);
     let mime = match ext.as_deref() {
         Some("jpg") | Some("jpeg") => "image/jpeg",
-        Some("png")  => "image/png",
-        Some("gif")  => "image/gif",
+        Some("png") => "image/png",
+        Some("gif") => "image/gif",
         Some("webp") => "image/webp",
         _ => anyhow::bail!(
             "Unsupported image format '{}'. Supported: jpg, png, gif, webp",
@@ -24,12 +24,14 @@ pub fn read_image(path: &str) -> anyhow::Result<String> {
         ),
     };
 
-    let bytes = std::fs::read(path)
-        .map_err(|e| anyhow::anyhow!("Cannot read '{path}': {e}"))?;
+    let bytes = std::fs::read(path).map_err(|e| anyhow::anyhow!("Cannot read '{path}': {e}"))?;
 
     // 10 MB guard — base64 of 10MB is ~14MB of text, which is already large.
     if bytes.len() > 10 * 1024 * 1024 {
-        anyhow::bail!("Image too large ({}MB, max 10MB)", bytes.len() / 1024 / 1024);
+        anyhow::bail!(
+            "Image too large ({}MB, max 10MB)",
+            bytes.len() / 1024 / 1024
+        );
     }
 
     let b64 = base64::Engine::encode(&base64::engine::general_purpose::STANDARD, &bytes);
@@ -81,7 +83,10 @@ pub async fn web_fetch(url: &str) -> anyhow::Result<String> {
 
     // Images: return as a data-URI so the model can see them.
     let mime = content_type.split(';').next().unwrap_or("").trim();
-    let is_image = matches!(mime, "image/jpeg" | "image/jpg" | "image/png" | "image/gif" | "image/webp");
+    let is_image = matches!(
+        mime,
+        "image/jpeg" | "image/jpg" | "image/png" | "image/gif" | "image/webp"
+    );
     if is_image {
         let b64 = base64::Engine::encode(&base64::engine::general_purpose::STANDARD, &bytes);
         return Ok(format!("data:{mime};base64,{b64}"));
@@ -106,8 +111,7 @@ fn html_to_text(html: &str) -> String {
 
     // 2. Block-level tags → newlines.
     let re_block =
-        regex::Regex::new(r"(?i)</(p|div|h[1-6]|li|tr|br|article|section|header|footer)>")
-            .unwrap();
+        regex::Regex::new(r"(?i)</(p|div|h[1-6]|li|tr|br|article|section|header|footer)>").unwrap();
     let s = re_block.replace_all(&s, "\n");
     let re_br = regex::Regex::new(r"(?i)<br\s*/?>").unwrap();
     let s = re_br.replace_all(&s, "\n");
@@ -180,10 +184,7 @@ pub async fn web_search(query: &str, num_results: usize) -> anyhow::Result<Strin
     for line in body.lines() {
         if let Some(json_str) = line.strip_prefix("data: ") {
             if let Ok(v) = serde_json::from_str::<serde_json::Value>(json_str) {
-                if let Some(text) = v
-                    .pointer("/result/content/0/text")
-                    .and_then(|t| t.as_str())
-                {
+                if let Some(text) = v.pointer("/result/content/0/text").and_then(|t| t.as_str()) {
                     return Ok(text.to_string());
                 }
             }
@@ -192,10 +193,7 @@ pub async fn web_search(query: &str, num_results: usize) -> anyhow::Result<Strin
 
     // Fallback: try parsing entire body as JSON.
     if let Ok(v) = serde_json::from_str::<serde_json::Value>(&body) {
-        if let Some(text) = v
-            .pointer("/result/content/0/text")
-            .and_then(|t| t.as_str())
-        {
+        if let Some(text) = v.pointer("/result/content/0/text").and_then(|t| t.as_str()) {
             return Ok(text.to_string());
         }
     }

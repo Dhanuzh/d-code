@@ -182,7 +182,8 @@ pub async fn dispatch(name: &str, args: &serde_json::Value, cwd: &Path) -> anyho
                 path,
                 start_line: args["start_line"].as_u64().map(|n| n as usize),
                 end_line: args["end_line"].as_u64().map(|n| n as usize),
-            }).await?;
+            })
+            .await?;
             // Large file reads: save to disk and return preview with hint.
             Ok(truncate::maybe_offload(result, name, cwd))
         }
@@ -284,10 +285,7 @@ pub async fn dispatch(name: &str, args: &serde_json::Value, cwd: &Path) -> anyho
             let query = args["query"]
                 .as_str()
                 .ok_or_else(|| anyhow::anyhow!("query required"))?;
-            let num = args["num_results"]
-                .as_u64()
-                .unwrap_or(6)
-                .min(10) as usize;
+            let num = args["num_results"].as_u64().unwrap_or(6).min(10) as usize;
             let result = web::web_search(query, num).await?;
             Ok(truncate::maybe_offload(result, name, cwd))
         }

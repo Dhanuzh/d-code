@@ -10,7 +10,10 @@ pub fn build_system_prompt(cwd: &Path) -> String {
 }
 
 /// Same as `build_system_prompt` but accepts pre-loaded skills (avoids re-scanning).
-pub fn build_system_prompt_with_skills(cwd: &Path, skills: Option<&[crate::skills::Skill]>) -> String {
+pub fn build_system_prompt_with_skills(
+    cwd: &Path,
+    skills: Option<&[crate::skills::Skill]>,
+) -> String {
     let date = chrono::Local::now().format("%Y-%m-%d");
     let cwd_str = cwd.display();
 
@@ -84,10 +87,10 @@ fn detect_stack(cwd: &Path) -> String {
             "npm"
         };
         stacks.push(match pm {
-            "bun"  => "Node/Bun — build: `bun run build` · test: `bun test`",
+            "bun" => "Node/Bun — build: `bun run build` · test: `bun test`",
             "pnpm" => "Node/pnpm — build: `pnpm build` · test: `pnpm test`",
             "yarn" => "Node/Yarn — build: `yarn build` · test: `yarn test`",
-            _      => "Node/npm — build: `npm run build` · test: `npm test`",
+            _ => "Node/npm — build: `npm run build` · test: `npm test`",
         });
     }
     // Python
@@ -126,7 +129,12 @@ fn load_project_context(cwd: &Path) -> String {
     // Walk up the directory tree.
     let mut dir = Some(cwd);
     while let Some(current) = dir {
-        for name in &["DCODE.md", "AGENTS.md", ".d-code/PROMPT.md", ".claude/CLAUDE.md"] {
+        for name in &[
+            "DCODE.md",
+            "AGENTS.md",
+            ".d-code/PROMPT.md",
+            ".claude/CLAUDE.md",
+        ] {
             let path = current.join(name);
             if let Ok(content) = std::fs::read_to_string(&path) {
                 let trimmed = content.trim().to_string();

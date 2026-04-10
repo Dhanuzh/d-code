@@ -26,14 +26,20 @@ pub enum CommandResult {
     ShowSessions,
     ResumeLatest,
     NewSession,
-    Export { path: Option<String> },
+    Export {
+        path: Option<String>,
+    },
     Init,
     /// Set a display name for the current session.
-    SetName { name: String },
+    SetName {
+        name: String,
+    },
     /// Copy the last assistant message to clipboard.
     CopyLast,
     /// Fork the session at a specific turn (0 = current).
-    Fork { turn: Option<usize> },
+    Fork {
+        turn: Option<usize>,
+    },
     /// Show the session tree (all sessions with parent-child relationships).
     ShowTree,
     /// Share the session as a GitHub gist.
@@ -42,7 +48,9 @@ pub enum CommandResult {
     ListPrompts,
     /// (Unused — template expansion is handled inline before command dispatch.)
     #[allow(dead_code)]
-    ExpandPrompt { expanded: String },
+    ExpandPrompt {
+        expanded: String,
+    },
     /// List available skills.
     ListSkills,
 }
@@ -167,7 +175,10 @@ Features:
             println!();
             println!("  Provider : {}", agent.provider_info());
             println!("  Turns    : {}", s.turn_count());
-            println!("  Tokens   : {} in / {} out  ({:.1}% output)", s.total_input_tokens, s.total_output_tokens, out_ratio);
+            println!(
+                "  Tokens   : {} in / {} out  ({:.1}% output)",
+                s.total_input_tokens, s.total_output_tokens, out_ratio
+            );
             println!("  Context  : ~{ctx_used} tokens in ctx  ({ctx_pct:.1}% of {ctx_window})");
             println!("  Est. cost: ~${est_cost_usd:.4} USD  ({rate_label})");
             println!("  Tip      : /compact · /undo · /new for fresh session");

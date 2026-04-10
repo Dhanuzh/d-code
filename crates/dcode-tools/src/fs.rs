@@ -18,7 +18,8 @@ pub struct ReadArgs {
 
 pub async fn read_file(args: ReadArgs) -> anyhow::Result<String> {
     let path = PathBuf::from(&args.path);
-    let content = tokio::fs::read_to_string(&path).await
+    let content = tokio::fs::read_to_string(&path)
+        .await
         .with_context(|| format!("read {}", args.path))?;
 
     let lines: Vec<&str> = content.lines().collect();

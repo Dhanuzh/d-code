@@ -7,7 +7,9 @@ use async_trait::async_trait;
 use futures::Stream;
 
 use crate::provider::Provider;
-use crate::types::{AuthStore, ContentBlock, Message, ProviderAuth, Role, StopReason, StreamEvent, ToolDef};
+use crate::types::{
+    AuthStore, ContentBlock, Message, ProviderAuth, Role, StopReason, StreamEvent, ToolDef,
+};
 
 const API_BASE: &str = "https://openrouter.ai/api/v1";
 const USER_AGENT: &str = "d-code/0.1";
@@ -44,7 +46,10 @@ pub const CONTEXT_WINDOW: u32 = 128_000;
 
 pub fn save_api_key(key: &str) -> anyhow::Result<()> {
     let mut store = AuthStore::load().unwrap_or_default();
-    store.openrouter = Some(ProviderAuth { token: key.to_string(), expires_at: None });
+    store.openrouter = Some(ProviderAuth {
+        token: key.to_string(),
+        expires_at: None,
+    });
     store.save()
 }
 
@@ -88,7 +93,10 @@ fn parse_data_image_uri(s: &str) -> Option<(&str, &str)> {
     let rest = s.strip_prefix("data:")?;
     let (mime, rest) = rest.split_once(';')?;
     let data = rest.strip_prefix("base64,")?;
-    if matches!(mime, "image/jpeg" | "image/png" | "image/gif" | "image/webp") {
+    if matches!(
+        mime,
+        "image/jpeg" | "image/png" | "image/gif" | "image/webp"
+    ) {
         Some((mime, data))
     } else {
         None
@@ -120,8 +128,13 @@ fn messages_to_oai(messages: &[Message]) -> Vec<serde_json::Value> {
                             }
                         }));
                     }
-                    ContentBlock::ToolResult { tool_use_id, content, .. } => {
-                        let content_val = if let Some((mime, data)) = parse_data_image_uri(content) {
+                    ContentBlock::ToolResult {
+                        tool_use_id,
+                        content,
+                        ..
+                    } => {
+                        let content_val = if let Some((mime, data)) = parse_data_image_uri(content)
+                        {
                             serde_json::json!([{
                                 "type": "image_url",
                                 "image_url": { "url": format!("data:{mime};base64,{data}") }
@@ -194,13 +207,7 @@ impl Provider for OpenRouterProvider {
             data: Vec<ModelObj>,
         }
         let url = format!("{API_BASE}/models");
-        let Ok(resp) = self
-            .client
-            .get(&url)
-            .bearer_auth(&self.token)
-            .send()
-            .await
-        else {
+        let Ok(resp) = self.client.get(&url).bearer_auth(&self.token).send().await else {
             return SUPPORTED_MODELS.iter().map(|s| s.to_string()).collect();
         };
         let Ok(list) = resp.json::<ModelList>().await else {

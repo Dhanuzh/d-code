@@ -12,7 +12,9 @@ pub async fn login_anthropic() -> anyhow::Result<()> {
     // Check if already logged in.
     if let Ok(store) = AuthStore::load() {
         if store.anthropic.is_some() {
-            render::print_info("Already logged in to Anthropic. Use /logout anthropic first to re-login.");
+            render::print_info(
+                "Already logged in to Anthropic. Use /logout anthropic first to re-login.",
+            );
             return Ok(());
         }
     }
@@ -49,7 +51,9 @@ pub async fn login_anthropic() -> anyhow::Result<()> {
     render::print_info("Exchanging code for token…");
     let token = anthropic::exchange_code(code, &req.verifier).await?;
     anthropic::save_token(&token)?;
-    render::print_success("Logged in to Anthropic  ✓  (claude-sonnet-4-5 and others now available)");
+    render::print_success(
+        "Logged in to Anthropic  ✓  (claude-sonnet-4-5 and others now available)",
+    );
     Ok(())
 }
 
@@ -58,7 +62,9 @@ pub async fn login_anthropic() -> anyhow::Result<()> {
 pub async fn login_copilot() -> anyhow::Result<()> {
     if let Ok(store) = AuthStore::load() {
         if store.copilot.is_some() {
-            render::print_info("Already logged in to GitHub Copilot. Use /logout copilot first to re-login.");
+            render::print_info(
+                "Already logged in to GitHub Copilot. Use /logout copilot first to re-login.",
+            );
             return Ok(());
         }
     }
@@ -96,7 +102,9 @@ pub async fn login_copilot() -> anyhow::Result<()> {
 pub async fn login_openai() -> anyhow::Result<()> {
     if let Ok(store) = AuthStore::load() {
         if store.openai_oauth.is_some() || store.openai.is_some() {
-            render::print_info("Already logged in to OpenAI. Use /logout openai first to re-login.");
+            render::print_info(
+                "Already logged in to OpenAI. Use /logout openai first to re-login.",
+            );
             return Ok(());
         }
     }
@@ -126,7 +134,8 @@ pub async fn login_openai() -> anyhow::Result<()> {
                 &start.user_code,
                 start.interval.unwrap_or(5),
                 cancel,
-            ).await?;
+            )
+            .await?;
 
             openai::save_oauth(&oauth)?;
             render::print_success("Logged in to OpenAI  ✓  (GPT-4.1, o3, o4-mini now available)");
@@ -163,7 +172,9 @@ pub async fn login_openai() -> anyhow::Result<()> {
 pub async fn login_gemini() -> anyhow::Result<()> {
     if let Ok(store) = AuthStore::load() {
         if store.gemini.is_some() {
-            render::print_info("Already logged in to Gemini. Use /logout gemini first to re-login.");
+            render::print_info(
+                "Already logged in to Gemini. Use /logout gemini first to re-login.",
+            );
             return Ok(());
         }
     }
@@ -331,7 +342,10 @@ fn open_browser(url: &str) -> bool {
         .args(["/c", "start", url])
         .spawn();
     #[cfg(not(any(target_os = "macos", target_os = "linux", target_os = "windows")))]
-    let cmd: Result<_, _> = Err(std::io::Error::new(std::io::ErrorKind::Other, "unsupported"));
+    let cmd: Result<_, _> = Err(std::io::Error::new(
+        std::io::ErrorKind::Other,
+        "unsupported",
+    ));
 
     cmd.is_ok()
 }
@@ -351,7 +365,9 @@ fn visible_len(s: &str) -> usize {
     let mut in_escape = false;
     for ch in s.chars() {
         if in_escape {
-            if ch == 'm' { in_escape = false; }
+            if ch == 'm' {
+                in_escape = false;
+            }
         } else if ch == '\x1b' {
             in_escape = true;
         } else {

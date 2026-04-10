@@ -20,11 +20,11 @@ const AUTH_BASE: &str = "https://auth.openai.com";
 /// Step 1 — request a user code + device_auth_id.
 const DEVICE_USERCODE_URL: &str = "https://auth.openai.com/api/accounts/deviceauth/usercode";
 /// Step 2 — poll until an authorization_code is issued.
-const DEVICE_TOKEN_URL: &str   = "https://auth.openai.com/api/accounts/deviceauth/token";
+const DEVICE_TOKEN_URL: &str = "https://auth.openai.com/api/accounts/deviceauth/token";
 /// Step 3 — exchange authorization_code → access_token + refresh_token.
-const CODE_EXCHANGE_URL: &str  = "https://auth.openai.com/oauth/token";
+const CODE_EXCHANGE_URL: &str = "https://auth.openai.com/oauth/token";
 /// Redirect URI expected by the token endpoint.
-const REDIRECT_URI: &str       = "https://auth.openai.com/deviceauth/callback";
+const REDIRECT_URI: &str = "https://auth.openai.com/deviceauth/callback";
 
 pub const DEFAULT_MODEL: &str = "gpt-4.1-mini";
 pub const SUPPORTED_MODELS: &[&str] = &[
@@ -63,11 +63,18 @@ where
     use serde::Deserialize;
     #[derive(serde::Deserialize)]
     #[serde(untagged)]
-    enum StrOrU64 { Str(String), Num(u64) }
+    enum StrOrU64 {
+        Str(String),
+        Num(u64),
+    }
     match Option::<StrOrU64>::deserialize(d)? {
         None => Ok(None),
         Some(StrOrU64::Num(n)) => Ok(Some(n)),
-        Some(StrOrU64::Str(s)) => s.trim().parse::<u64>().map(Some).map_err(serde::de::Error::custom),
+        Some(StrOrU64::Str(s)) => s
+            .trim()
+            .parse::<u64>()
+            .map(Some)
+            .map_err(serde::de::Error::custom),
     }
 }
 
@@ -163,10 +170,13 @@ async fn poll_for_auth_code(
         if let Some(err) = &data.error {
             match err.as_str() {
                 "authorization_pending" => continue,
-                "slow_down"            => { interval += 5; continue; }
-                "expired_token"        => bail!("Device code expired — run login again"),
-                "access_denied"        => bail!("Authorization denied"),
-                other                  => bail!("OAuth poll error: {other}"),
+                "slow_down" => {
+                    interval += 5;
+                    continue;
+                }
+                "expired_token" => bail!("Device code expired — run login again"),
+                "access_denied" => bail!("Authorization denied"),
+                other => bail!("OAuth poll error: {other}"),
             }
         }
 
@@ -202,8 +212,14 @@ async fn exchange_code(auth_code: &str, code_verifier: &str) -> anyhow::Result<O
         bail!("OpenAI code exchange failed {status}: {body}");
     }
     let data: TokenResp = resp.json().await.context("parse token response")?;
-    let expires_at = data.expires_in.map(|s| chrono::Utc::now().timestamp() + s as i64);
-    Ok(OpenAiOAuth { access_token: data.access_token, refresh_token: data.refresh_token, expires_at })
+    let expires_at = data
+        .expires_in
+        .map(|s| chrono::Utc::now().timestamp() + s as i64);
+    Ok(OpenAiOAuth {
+        access_token: data.access_token,
+        refresh_token: data.refresh_token,
+        expires_at,
+    })
 }
 
 /// Step 2+3 — poll for auth code then exchange it for OAuth tokens.
@@ -258,7 +274,9 @@ async fn refresh_access_token(oauth: &OpenAiOAuth) -> anyhow::Result<OpenAiOAuth
         bail!("OpenAI token refresh failed {status}: {body}");
     }
     let data: TokenResp = resp.json().await.context("parse refresh response")?;
-    let expires_at = data.expires_in.map(|s| chrono::Utc::now().timestamp() + s as i64);
+    let expires_at = data
+        .expires_in
+        .map(|s| chrono::Utc::now().timestamp() + s as i64);
     let fresh = OpenAiOAuth {
         access_token: data.access_token,
         refresh_token: data.refresh_token,
@@ -299,9 +317,10 @@ impl OpenAIProvider {
             let rt = tokio::runtime::Handle::try_current()
                 .map(|h| {
                     let oauth = oauth.clone();
-                    std::thread::spawn(move || {
-                        h.block_on(refresh_access_token(&oauth))
-                    }).join().ok()?.ok()
+                    std::thread::spawn(move || h.block_on(refresh_access_token(&oauth)))
+                        .join()
+                        .ok()?
+                        .ok()
                 })
                 .ok()
                 .flatten();
@@ -342,7 +361,10 @@ fn parse_data_image_uri(s: &str) -> Option<(&str, &str)> {
     let rest = s.strip_prefix("data:")?;
     let (mime, rest) = rest.split_once(';')?;
     let data = rest.strip_prefix("base64,")?;
-    if matches!(mime, "image/jpeg" | "image/png" | "image/gif" | "image/webp") {
+    if matches!(
+        mime,
+        "image/jpeg" | "image/png" | "image/gif" | "image/webp"
+    ) {
         Some((mime, data))
     } else {
         None
@@ -379,7 +401,8 @@ fn messages_to_oai(messages: &[Message]) -> Vec<serde_json::Value> {
                         content,
                         ..
                     } => {
-                        let content_val = if let Some((mime, data)) = parse_data_image_uri(content) {
+                        let content_val = if let Some((mime, data)) = parse_data_image_uri(content)
+                        {
                             serde_json::json!([{
                                 "type": "image_url",
                                 "image_url": { "url": format!("data:{mime};base64,{data}") }
@@ -443,23 +466,38 @@ impl Provider for OpenAIProvider {
 
     async fn list_models(&self) -> Vec<String> {
         #[derive(serde::Deserialize)]
-        struct ModelObj { id: String }
+        struct ModelObj {
+            id: String,
+        }
         #[derive(serde::Deserialize)]
-        struct ModelList { data: Vec<ModelObj> }
+        struct ModelList {
+            data: Vec<ModelObj>,
+        }
 
         let url = format!("{}/v1/models", self.base_url);
-        let Ok(resp) = self.client.get(&url)
-            .bearer_auth(&self.token)
-            .send().await else { return SUPPORTED_MODELS.iter().map(|s| s.to_string()).collect(); };
+        let Ok(resp) = self.client.get(&url).bearer_auth(&self.token).send().await else {
+            return SUPPORTED_MODELS.iter().map(|s| s.to_string()).collect();
+        };
         let Ok(list) = resp.json::<ModelList>().await else {
             return SUPPORTED_MODELS.iter().map(|s| s.to_string()).collect();
         };
-        let mut ids: Vec<String> = list.data.into_iter()
+        let mut ids: Vec<String> = list
+            .data
+            .into_iter()
             .map(|m| m.id)
-            .filter(|id| id.starts_with("gpt-") || id.starts_with("o1") || id.starts_with("o3") || id.starts_with("o4"))
+            .filter(|id| {
+                id.starts_with("gpt-")
+                    || id.starts_with("o1")
+                    || id.starts_with("o3")
+                    || id.starts_with("o4")
+            })
             .collect();
         ids.sort();
-        if ids.is_empty() { SUPPORTED_MODELS.iter().map(|s| s.to_string()).collect() } else { ids }
+        if ids.is_empty() {
+            SUPPORTED_MODELS.iter().map(|s| s.to_string()).collect()
+        } else {
+            ids
+        }
     }
 
     async fn chat_stream(

@@ -46,7 +46,9 @@ fn load_from_dir(
     if !dir.exists() {
         return;
     }
-    let Ok(entries) = std::fs::read_dir(dir) else { return };
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return;
+    };
     let mut entries: Vec<_> = entries.filter_map(|e| e.ok()).collect();
     entries.sort_by_key(|e| e.file_name());
 
@@ -92,7 +94,10 @@ fn parse_frontmatter(raw: &str) -> (String, String) {
         return (desc, raw.to_string());
     }
 
-    let rest = trimmed.strip_prefix("---").unwrap().trim_start_matches('\n');
+    let rest = trimmed
+        .strip_prefix("---")
+        .unwrap()
+        .trim_start_matches('\n');
     let Some(end) = rest.find("\n---") else {
         return (String::new(), raw.to_string());
     };
@@ -188,9 +193,7 @@ fn substitute_args(content: &str, args: &[String]) -> String {
                         let start = parts[0].parse::<usize>().unwrap_or(1).saturating_sub(1);
                         let slice = if parts.len() == 2 {
                             let len = parts[1].parse::<usize>().unwrap_or(0);
-                            args.get(start..start + len)
-                                .unwrap_or(&[])
-                                .join(" ")
+                            args.get(start..start + len).unwrap_or(&[]).join(" ")
                         } else {
                             args.get(start..).unwrap_or(&[]).join(" ")
                         };
@@ -207,7 +210,11 @@ fn substitute_args(content: &str, args: &[String]) -> String {
                     j += 1;
                 }
                 let n: usize = content[i + 1..j].parse().unwrap_or(0);
-                result.push_str(args.get(n.saturating_sub(1)).map(|s| s.as_str()).unwrap_or(""));
+                result.push_str(
+                    args.get(n.saturating_sub(1))
+                        .map(|s| s.as_str())
+                        .unwrap_or(""),
+                );
                 i = j;
                 continue;
             }

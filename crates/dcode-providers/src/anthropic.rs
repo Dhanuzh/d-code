@@ -229,7 +229,10 @@ fn messages_to_api_with_cache(messages: &[Message]) -> Vec<serde_json::Value> {
     messages_to_api_with_cache_inner(messages, true)
 }
 
-fn messages_to_api_with_cache_inner(messages: &[Message], use_cache: bool) -> Vec<serde_json::Value> {
+fn messages_to_api_with_cache_inner(
+    messages: &[Message],
+    use_cache: bool,
+) -> Vec<serde_json::Value> {
     // Find the index of the penultimate assistant message for cache checkpoint.
     // We cache everything up to (but not including) the last two messages so
     // the stable "history" is cached and only new content is charged full price.
@@ -318,7 +321,10 @@ fn parse_data_image_uri(s: &str) -> Option<(&str, &str)> {
     let (mime, rest) = rest.split_once(';')?;
     let data = rest.strip_prefix("base64,")?;
     // Only pass through supported Anthropic image types.
-    if matches!(mime, "image/jpeg" | "image/png" | "image/gif" | "image/webp") {
+    if matches!(
+        mime,
+        "image/jpeg" | "image/png" | "image/gif" | "image/webp"
+    ) {
         Some((mime, data))
     } else {
         None

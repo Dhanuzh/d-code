@@ -279,7 +279,10 @@ fn parse_data_image_uri(s: &str) -> Option<(&str, &str)> {
     let rest = s.strip_prefix("data:")?;
     let (mime, rest) = rest.split_once(';')?;
     let data = rest.strip_prefix("base64,")?;
-    if matches!(mime, "image/jpeg" | "image/png" | "image/gif" | "image/webp") {
+    if matches!(
+        mime,
+        "image/jpeg" | "image/png" | "image/gif" | "image/webp"
+    ) {
         Some((mime, data))
     } else {
         None
@@ -317,7 +320,8 @@ fn messages_to_oai(messages: &[Message]) -> Vec<serde_json::Value> {
                         content,
                         ..
                     } => {
-                        let content_val = if let Some((mime, data)) = parse_data_image_uri(content) {
+                        let content_val = if let Some((mime, data)) = parse_data_image_uri(content)
+                        {
                             serde_json::json!([{
                                 "type": "image_url",
                                 "image_url": { "url": format!("data:{mime};base64,{data}") }
@@ -383,22 +387,33 @@ impl Provider for CopilotProvider {
 
     async fn list_models(&self) -> Vec<String> {
         #[derive(serde::Deserialize)]
-        struct Capabilities { #[serde(rename = "type")] kind: Option<String> }
+        struct Capabilities {
+            #[serde(rename = "type")]
+            kind: Option<String>,
+        }
         #[derive(serde::Deserialize)]
-        struct ModelObj { id: String, capabilities: Option<Capabilities> }
+        struct ModelObj {
+            id: String,
+            capabilities: Option<Capabilities>,
+        }
         #[derive(serde::Deserialize)]
-        struct ModelList { data: Vec<ModelObj> }
+        struct ModelList {
+            data: Vec<ModelObj>,
+        }
 
         let token = match self.fresh_copilot_token().await {
             Ok(t) => t,
             Err(_) => return SUPPORTED_MODELS.iter().map(|s| s.to_string()).collect(),
         };
-        let Ok(resp) = self.client
+        let Ok(resp) = self
+            .client
             .get("https://api.githubcopilot.com/models")
             .bearer_auth(&token)
             .header("Copilot-Integration-Id", "vscode-chat")
-            .send().await else {
-                return SUPPORTED_MODELS.iter().map(|s| s.to_string()).collect();
+            .send()
+            .await
+        else {
+            return SUPPORTED_MODELS.iter().map(|s| s.to_string()).collect();
         };
         let Ok(list) = resp.json::<ModelList>().await else {
             return SUPPORTED_MODELS.iter().map(|s| s.to_string()).collect();
@@ -406,9 +421,12 @@ impl Provider for CopilotProvider {
         // Only include models that explicitly support chat completions.
         // Exclude models with no capability info or capabilities.type != "chat"
         // (e.g. gpt-5.3-codex is "completions"-only and fails on /chat/completions).
-        let mut ids: Vec<String> = list.data.into_iter()
+        let mut ids: Vec<String> = list
+            .data
+            .into_iter()
             .filter(|m| {
-                m.capabilities.as_ref()
+                m.capabilities
+                    .as_ref()
                     .and_then(|c| c.kind.as_deref())
                     .map(|k| k == "chat")
                     .unwrap_or(false) // exclude if capability info is missing
@@ -416,7 +434,11 @@ impl Provider for CopilotProvider {
             .map(|m| m.id)
             .collect();
         ids.sort();
-        if ids.is_empty() { SUPPORTED_MODELS.iter().map(|s| s.to_string()).collect() } else { ids }
+        if ids.is_empty() {
+            SUPPORTED_MODELS.iter().map(|s| s.to_string()).collect()
+        } else {
+            ids
+        }
     }
 
     async fn chat_stream(

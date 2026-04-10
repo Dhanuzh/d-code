@@ -16,11 +16,11 @@
 //! 6. Wrap in synchronized-output escape (`\x1b[?2026h...\x1b[?2026l`) to
 //!    prevent flicker on responsive terminals.
 
-pub mod line;
 pub mod component;
-pub mod tui;
-pub mod span;
 pub mod components;
+pub mod line;
+pub mod span;
+pub mod tui;
 
 pub use component::Component;
 pub use line::Line;
@@ -28,12 +28,5 @@ pub use span::Span;
 pub use tui::Tui;
 
 // Re-export all components at crate root for convenience.
-pub use components::{
-    AssistantMessage,
-    ToolExecution,
-    Spinner,
-    StatusBar,
-    InputBar,
-    UserMessage,
-};
 pub use components::tool_execution::summarize_input;
+pub use components::{AssistantMessage, InputBar, Spinner, StatusBar, ToolExecution, UserMessage};

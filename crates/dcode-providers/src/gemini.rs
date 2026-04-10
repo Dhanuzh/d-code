@@ -7,7 +7,9 @@ use async_trait::async_trait;
 use futures::Stream;
 
 use crate::provider::Provider;
-use crate::types::{AuthStore, ContentBlock, Message, ProviderAuth, Role, StopReason, StreamEvent, ToolDef};
+use crate::types::{
+    AuthStore, ContentBlock, Message, ProviderAuth, Role, StopReason, StreamEvent, ToolDef,
+};
 
 const API_BASE: &str = "https://generativelanguage.googleapis.com/v1beta";
 
@@ -24,7 +26,10 @@ pub const CONTEXT_WINDOW: u32 = 1_000_000;
 
 pub fn save_api_key(key: &str) -> anyhow::Result<()> {
     let mut store = AuthStore::load().unwrap_or_default();
-    store.gemini = Some(ProviderAuth { token: key.to_string(), expires_at: None });
+    store.gemini = Some(ProviderAuth {
+        token: key.to_string(),
+        expires_at: None,
+    });
     store.save()
 }
 
@@ -97,7 +102,11 @@ fn messages_to_gemini(messages: &[Message]) -> Vec<serde_json::Value> {
                                 text_parts.push(serde_json::json!({"text": t}));
                             }
                         }
-                        ContentBlock::ToolResult { tool_use_id, content, .. } => {
+                        ContentBlock::ToolResult {
+                            tool_use_id,
+                            content,
+                            ..
+                        } => {
                             let fn_name = tool_id_to_name
                                 .get(tool_use_id)
                                 .map(|s| s.as_str())
@@ -161,10 +170,9 @@ fn deduplicate_consecutive_same_role(contents: Vec<serde_json::Value>) -> Vec<se
             let last_role = last["role"].as_str().unwrap_or("").to_string();
             if last_role == role {
                 // Merge parts
-                if let (Some(last_parts), Some(new_parts)) = (
-                    last["parts"].as_array_mut(),
-                    content["parts"].as_array(),
-                ) {
+                if let (Some(last_parts), Some(new_parts)) =
+                    (last["parts"].as_array_mut(), content["parts"].as_array())
+                {
                     last_parts.extend(new_parts.iter().cloned());
                 }
                 continue;
@@ -357,5 +365,8 @@ fn rand_u32() -> u32 {
     // Simple LCG using stack address as seed.
     let x: u64 = 0;
     let addr = &x as *const u64 as u64;
-    (addr.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407) >> 32) as u32
+    (addr
+        .wrapping_mul(6364136223846793005)
+        .wrapping_add(1442695040888963407)
+        >> 32) as u32
 }
