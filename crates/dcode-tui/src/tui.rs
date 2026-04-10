@@ -17,7 +17,7 @@ use crate::{Component, Line};
 /// The render engine.
 ///
 /// Usage:
-/// ```
+/// ```no_run
 /// let mut tui = Tui::new();
 /// tui.push(Box::new(MyComponent::new()));
 /// // on each event:
