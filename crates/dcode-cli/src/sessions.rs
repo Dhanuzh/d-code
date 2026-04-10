@@ -65,6 +65,7 @@ pub fn sessions_dir() -> PathBuf {
         .join("sessions")
 }
 
+#[allow(dead_code)]
 pub fn save(provider_model: &str, messages: &[Message], turn_count: usize) -> Option<String> {
     save_with_opts(provider_model, messages, turn_count, None, None, None)
 }

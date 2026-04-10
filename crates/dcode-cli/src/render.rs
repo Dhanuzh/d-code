@@ -1,9 +1,7 @@
 /// Terminal renderer: streaming markdown with inline formatting + tool display.
 use crossterm::cursor::{MoveToColumn, MoveUp};
 use crossterm::event::{self, Event, KeyCode, KeyEvent, KeyModifiers};
-use crossterm::style::{
-    Attribute, Color, ResetColor, SetAttribute, SetBackgroundColor, SetForegroundColor,
-};
+use crossterm::style::{Attribute, Color, ResetColor, SetAttribute, SetForegroundColor};
 use crossterm::terminal::{self, Clear, ClearType};
 use crossterm::{execute, style::Print};
 use std::io::{stdout, Write};
@@ -485,8 +483,7 @@ fn find_str(s: &str, needle: &str, from: usize) -> Option<usize> {
 }
 
 fn find_byte(s: &str, needle: u8, from: usize) -> Option<usize> {
-    s[from..]
-        .as_bytes()
+    s.as_bytes()[from..]
         .iter()
         .position(|&b| b == needle)
         .map(|p| p + from)
@@ -1363,6 +1360,7 @@ pub fn print_error(msg: &str) {
 }
 
 /// Thin separator printed before each assistant response starts.
+#[allow(dead_code)]
 pub fn print_turn_divider() {
     let w = terminal::size().map(|(w, _)| w as usize).unwrap_or(80);
     let _ = execute!(
@@ -1838,7 +1836,7 @@ pub fn confirm_dangerous_bash(cmd: &str) -> bool {
 /// Prompt the user with a question from the AI's ask_user tool.
 /// Returns the user's text answer.
 pub fn prompt_user_question(question: &str, choices: &[String]) -> String {
-    use crossterm::style::{Attribute, Color, ResetColor, SetAttribute, SetForegroundColor};
+    use crossterm::style::{Attribute, ResetColor, SetAttribute, SetForegroundColor};
     println!();
     let _ = execute!(
         stdout(),
@@ -1908,6 +1906,7 @@ fn truncate_to(s: &str, max_chars: usize) -> String {
     }
 }
 
+#[allow(dead_code)]
 fn visible_str_len(s: &str) -> usize {
     let mut len = 0usize;
     let mut esc = false;
@@ -2090,6 +2089,7 @@ pub fn select_interactive_with_current(
 }
 
 /// Returns total lines rendered.
+#[allow(clippy::too_many_arguments)]
 fn draw_picker_full(
     out: &mut impl Write,
     title: &str,
@@ -2187,8 +2187,8 @@ fn draw_picker_full(
             lines += 1;
         }
 
-        for vis_i in scroll_offset..visible_end {
-            let item_idx = filtered[vis_i];
+        for (rel_i, &item_idx) in filtered[scroll_offset..visible_end].iter().enumerate() {
+            let vis_i = scroll_offset + rel_i;
             let item = &items[item_idx];
             let is_sel = vis_i == selected;
             let is_current = current_idx == Some(item_idx);

@@ -106,8 +106,10 @@ pub async fn web_fetch(url: &str) -> anyhow::Result<String> {
 /// decodes common entities.
 fn html_to_text(html: &str) -> String {
     // 1. Remove <script>…</script> and <style>…</style> blocks (case-insensitive, dotall).
-    let re_script = regex::Regex::new(r"(?is)<(script|style)[^>]*>.*?</\1>").unwrap();
+    let re_script = regex::Regex::new(r"(?is)<script[^>]*>.*?</script>").unwrap();
+    let re_style = regex::Regex::new(r"(?is)<style[^>]*>.*?</style>").unwrap();
     let s = re_script.replace_all(html, " ");
+    let s = re_style.replace_all(&s, " ");
 
     // 2. Block-level tags → newlines.
     let re_block =

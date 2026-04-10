@@ -98,7 +98,7 @@ pub async fn run(cwd: PathBuf, provider_name: Option<String>) -> anyhow::Result<
     // Wire up bash confirmation (dangerous commands always need approval;
     // confirm_bash:true in config also requires approval for all bash commands).
     let _confirm_all = config.confirm_bash;
-    agent.bash_approver = Some(Box::new(|cmd| render::confirm_dangerous_bash(cmd)));
+    agent.bash_approver = Some(Box::new(render::confirm_dangerous_bash));
 
     // Wire up ask_user prompter.
     agent.user_prompter = Some(Box::new(|question, choices| {
@@ -1588,7 +1588,7 @@ fn friendly_error(raw: &str) -> String {
             // OpenAI: {"error": {"message": "..."}}
             if let Some(msg) = v.pointer("/error/message").and_then(|m| m.as_str()) {
                 // Prepend the non-JSON prefix (e.g. "chat_stream: OpenAI API error 429")
-                let prefix = raw[..start].trim_end_matches(|c: char| c == ':' || c == ' ');
+                let prefix = raw[..start].trim_end_matches([':', ' ']);
                 return if prefix.is_empty() {
                     msg.to_string()
                 } else {

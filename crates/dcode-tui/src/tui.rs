@@ -12,12 +12,12 @@ use std::time::{Duration, Instant};
 
 use crossterm::terminal;
 
-use crate::{Component, Line};
+use crate::Component;
 
 /// The render engine.
 ///
 /// Usage:
-/// ```no_run
+/// ```ignore
 /// let mut tui = Tui::new();
 /// tui.push(Box::new(MyComponent::new()));
 /// // on each event:
@@ -87,6 +87,10 @@ impl Tui {
     /// Number of components.
     pub fn len(&self) -> usize {
         self.components.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.components.is_empty()
     }
 
     /// Mark a render as needed. Actual render happens on next `flush()` call,

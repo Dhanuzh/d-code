@@ -104,7 +104,7 @@ impl Component for HRule {
     fn render(&mut self, width: u16) -> Vec<Line> {
         self.last_width = width;
         self.dirty = false;
-        let text: String = std::iter::repeat(self.ch).take(width as usize).collect();
+        let text: String = std::iter::repeat_n(self.ch, width as usize).collect();
         let line = if let Some(s) = &self.style {
             Line::styled(text, s.clone())
         } else {

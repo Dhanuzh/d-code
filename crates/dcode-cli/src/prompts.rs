@@ -13,6 +13,7 @@
 use std::path::{Path, PathBuf};
 
 #[derive(Debug, Clone)]
+#[allow(dead_code)]
 pub struct PromptTemplate {
     pub name: String,
     pub description: String,

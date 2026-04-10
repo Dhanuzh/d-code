@@ -463,7 +463,7 @@ fn parse_anthropic_sse(
         // Emit final Done if we haven't already.
         let reason = stop_reason
             .as_deref()
-            .map(StopReason::from_str)
+            .map(StopReason::parse)
             .unwrap_or(StopReason::EndTurn);
         yield Ok(StreamEvent::Done { stop_reason: reason });
     }

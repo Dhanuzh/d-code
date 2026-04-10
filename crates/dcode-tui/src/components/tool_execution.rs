@@ -144,7 +144,7 @@ impl Component for ToolExecution {
         // Running tools re-render every frame for live elapsed time.
         let lines = self.build_lines(width);
         self.dirty = self.status == ToolStatus::Running;
-        lines.into_iter().map(|s| Line::raw(s)).collect()
+        lines.into_iter().map(Line::raw).collect()
     }
 
     fn is_dirty(&self) -> bool {

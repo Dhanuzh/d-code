@@ -529,7 +529,7 @@ fn parse_oai_sse(
         }
 
         // Emit any pending tool calls.
-        for (_, (id, name, args)) in &tool_calls {
+        for (id, name, args) in tool_calls.values() {
             yield Ok(StreamEvent::ToolUseStart { id: id.clone(), name: name.clone() });
             yield Ok(StreamEvent::ToolUseDelta(args.clone()));
             yield Ok(StreamEvent::ToolUseEnd);
@@ -537,7 +537,7 @@ fn parse_oai_sse(
 
         let reason = stop_reason
             .as_deref()
-            .map(StopReason::from_str)
+            .map(StopReason::parse)
             .unwrap_or(StopReason::EndTurn);
         yield Ok(StreamEvent::Done { stop_reason: reason });
     }

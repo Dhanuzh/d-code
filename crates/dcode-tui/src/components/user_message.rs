@@ -5,8 +5,6 @@ use crate::{Component, Line};
 
 const C_USER_BG: &str = "\x1b[48;2;40;44;56m"; // dark blue-grey background
 const C_USER_TEXT: &str = "\x1b[38;2;200;210;240m"; // light blue-white text
-const C_DIM: &str = "\x1b[38;2;102;102;102m";
-const C_ACCENT: &str = "\x1b[38;2;138;190;183m";
 const RESET: &str = "\x1b[0m";
 
 pub struct UserMessage {

@@ -4,6 +4,7 @@ use dcode_providers::{model_catalog, parse_provider_selector};
 
 use crate::render;
 
+#[allow(dead_code)]
 pub enum CommandResult {
     NotACommand,
     Handled,
@@ -56,6 +57,7 @@ pub enum CommandResult {
 }
 
 #[derive(Debug, Clone)]
+#[allow(dead_code)]
 pub struct ModelOption {
     pub provider: &'static str,
     pub model: &'static str,
@@ -82,7 +84,7 @@ fn provider_supports_model(provider: &str, model: &str) -> bool {
     model_catalog()
         .iter()
         .find(|c| c.provider == provider)
-        .map(|c| c.models.iter().any(|m| *m == model))
+        .map(|c| c.models.contains(&model))
         .unwrap_or(false)
 }
 

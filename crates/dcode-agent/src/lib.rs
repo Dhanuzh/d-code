@@ -58,8 +58,10 @@ pub struct Agent {
     cached_system_prompt: String,
     /// Called before executing a dangerous bash command. Return false to block it.
     /// If None, all commands execute without confirmation (dangerous ones still warned via event).
+    #[allow(clippy::type_complexity)]
     pub bash_approver: Option<Box<dyn Fn(&str) -> bool + Send + Sync>>,
     /// Called when the AI uses the ask_user tool. Returns the user's answer.
+    #[allow(clippy::type_complexity)]
     pub user_prompter: Option<Box<dyn Fn(&str, &[String]) -> String + Send + Sync>>,
 }
 
@@ -148,7 +150,7 @@ impl Agent {
         for _iter in 0..max_iterations {
             let mut stream = self
                 .provider
-                .chat_stream(&system, &self.session.messages, tools_for_turn, max_tokens)
+                .chat_stream(system, &self.session.messages, tools_for_turn, max_tokens)
                 .await
                 .context("chat_stream")?;
 
@@ -559,7 +561,7 @@ fn canonical_json(v: &serde_json::Value) -> String {
 /// Replace ALL image data URIs in tool results with a short stub.
 /// Called after every turn — the model already responded to the image,
 /// so keeping MB of base64 in context wastes tokens on every subsequent request.
-fn stub_image_tool_results(messages: &mut Vec<Message>) {
+fn stub_image_tool_results(messages: &mut [Message]) {
     for msg in messages.iter_mut() {
         for block in msg.content.iter_mut() {
             if let ContentBlock::ToolResult { content, .. } = block {
@@ -579,7 +581,7 @@ fn stub_image_tool_results(messages: &mut Vec<Message>) {
 /// After each turn, shrink ToolResult content in older messages.
 /// Keeps only the last `keep_recent` messages untouched.
 /// Images (data URIs) in old messages are replaced with a short stub to save context.
-fn trim_old_tool_results(messages: &mut Vec<Message>, keep_recent: usize) {
+fn trim_old_tool_results(messages: &mut [Message], keep_recent: usize) {
     const STUB_MAX: usize = 200; // enough context to understand what ran
     let len = messages.len();
     let trim_up_to = len.saturating_sub(keep_recent);

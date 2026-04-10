@@ -353,13 +353,10 @@ impl LineEditor {
                 } if modifiers.contains(KeyModifiers::CONTROL) => {
                     sess.rendered_rows = 0;
                     sess.cursor_row_offset = 0;
-                    match open_in_editor(&sess.text, &mut out) {
-                        Ok(text) => {
-                            sess.text = text;
-                            sess.cursor = sess.text.len();
-                            sess.comp_sel = None;
-                        }
-                        Err(_) => {}
+                    if let Ok(text) = open_in_editor(&sess.text, &mut out) {
+                        sess.text = text;
+                        sess.cursor = sess.text.len();
+                        sess.comp_sel = None;
                     }
                 }
                 // ── Ctrl-P / Ctrl-N: cycle model ────────────────────────────
