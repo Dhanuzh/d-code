@@ -69,9 +69,6 @@ impl ToolExecution {
         let w = width as usize;
         let mut lines = Vec::new();
 
-        // Empty spacer line before the block.
-        lines.push(String::new());
-
         match self.status {
             ToolStatus::Running => {
                 let bg = BG_PENDING;

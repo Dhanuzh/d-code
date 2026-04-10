@@ -33,6 +33,9 @@ pub struct Tui {
     last_render: Instant,
     /// Pending render request (set by request_render(), cleared on actual render).
     render_pending: bool,
+    /// Latest lines staged during a throttled call — rendered on next opportunity.
+    /// Prevents the "bulk paste" effect where skipped frames all appear at once.
+    pending_lines: Option<Vec<String>>,
     /// Cached terminal width.
     width: u16,
 }
@@ -45,6 +48,7 @@ impl Tui {
             prev_lines: Vec::new(),
             last_render: Instant::now() - Duration::from_secs(1),
             render_pending: false,
+            pending_lines: None,
             width,
         }
     }
@@ -107,13 +111,31 @@ impl Tui {
         self.write_diff(lines);
     }
 
-    /// Render a pre-built list of lines, throttled to ~60fps (16ms).
-    /// Stores the lines so the next forced render_lines() call can show latest state.
+    /// Render a pre-built list of lines, throttled to ~120fps (8ms).
+    ///
+    /// When within the throttle window, the lines are stored as `pending_lines`
+    /// so the next eligible call renders the latest state instead of the stale one.
+    /// This prevents the "bulk paste" effect where skipped frames all appear at once.
     pub fn render_lines_throttled(&mut self, lines: Vec<String>) {
-        if self.last_render.elapsed() >= Duration::from_millis(16) {
+        if self.last_render.elapsed() >= Duration::from_millis(8) {
+            // Drain any pending lines first; then render current.
+            self.pending_lines = None;
+            self.write_diff(lines);
+        } else {
+            // Too soon — store latest so the next eligible call renders it.
+            self.pending_lines = Some(lines);
+        }
+    }
+
+    /// Flush any pending lines staged during throttled calls.
+    /// Call this after receiving each event to catch frames that were staged but not yet rendered.
+    pub fn flush_pending(&mut self) {
+        if self.last_render.elapsed() < Duration::from_millis(8) {
+            return;
+        }
+        if let Some(lines) = self.pending_lines.take() {
             self.write_diff(lines);
         }
-        // If throttled, do nothing — caller will force a render at TurnDone.
     }
 
     /// Render if pending and throttle interval has elapsed (16ms = 60fps).
@@ -122,7 +144,7 @@ impl Tui {
             return;
         }
         let elapsed = self.last_render.elapsed();
-        if elapsed < Duration::from_millis(16) {
+        if elapsed < Duration::from_millis(8) {
             return; // Too soon — will render on next flush() call.
         }
         self.render_pending = false;

@@ -3,7 +3,10 @@
 use std::io::{self, Write};
 
 use crossterm::cursor::{MoveToColumn, MoveUp};
-use crossterm::event::{self, Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
+use crossterm::event::{
+    self, DisableBracketedPaste, EnableBracketedPaste, Event, KeyCode, KeyEvent, KeyEventKind,
+    KeyModifiers,
+};
 use crossterm::style::{Attribute, Color, Print, ResetColor, SetAttribute, SetForegroundColor};
 use crossterm::terminal::{self, Clear, ClearType};
 use crossterm::{execute, queue};
@@ -33,6 +36,14 @@ impl RawModeGuard {
 impl Drop for RawModeGuard {
     fn drop(&mut self) {
         let _ = terminal::disable_raw_mode();
+    }
+}
+
+/// Disables bracketed paste mode when dropped, even on early returns.
+struct BracketedPasteGuard;
+impl Drop for BracketedPasteGuard {
+    fn drop(&mut self) {
+        let _ = execute!(io::stdout(), DisableBracketedPaste);
     }
 }
 
@@ -253,6 +264,12 @@ impl LineEditor {
     pub fn read_line(&mut self) -> io::Result<ReadOutcome> {
         let _raw = RawModeGuard::enable()?;
         let mut out = io::stdout();
+        // Bracketed paste: terminal sends \x1b[200~paste\x1b[201~, crossterm surfaces it
+        // as Event::Paste(String). Prevents newlines in paste from triggering submit,
+        // and avoids re-rendering on every pasted character.
+        execute!(out, EnableBracketedPaste)?;
+        let _paste_guard = BracketedPasteGuard;
+
         let mut sess = Session::new();
         let mut hist_idx: Option<usize> = None;
         let mut hist_snap = String::new();
@@ -262,9 +279,20 @@ impl LineEditor {
         self.render(&mut sess, &mut out)?;
 
         loop {
-            let Ok(Event::Key(key)) = event::read() else {
+            let ev = event::read()?;
+
+            // ── Bracketed paste — insert whole block at once ──────────────────
+            if let Event::Paste(text) = ev {
+                for ch in text.chars() {
+                    sess.insert(ch);
+                }
+                hist_idx = None;
+                sess.comp_sel = None;
+                self.render(&mut sess, &mut out)?;
                 continue;
-            };
+            }
+
+            let Event::Key(key) = ev else { continue };
             if !matches!(key.kind, KeyEventKind::Press | KeyEventKind::Repeat) {
                 continue;
             }

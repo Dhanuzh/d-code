@@ -22,6 +22,6 @@ dcode-agent     = { path = "../dcode-agent" }
 dcode-tui       = { path = "../dcode-tui" }
 
 clap      = { version = "4", features = ["derive", "color"] }
-crossterm = "0.28"
+crossterm = { version = "0.28", features = ["bracketed-paste"] }
 reqwest.workspace = true
 base64.workspace  = true

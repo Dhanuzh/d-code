@@ -821,7 +821,14 @@ async fn run_bash_inline(cmd: &str, add_to_context: bool, agent: &mut dcode_agen
 
 /// Run one agent turn using the dcode-tui differential renderer.
 /// Layout mirrors pi-mono: UserMessage → spinner/tools → AssistantMessage → StatusBar footer.
+///
+/// Uses tokio::select! with a 16ms render ticker so the spinner animates smoothly
+/// even while waiting for the model (no events flowing), and text streaming renders
+/// at ~60fps without bulk-paste bursts.
 async fn run_turn_with_tui(agent: &mut dcode_agent::Agent, input: &str) {
+    use tokio::sync::mpsc::unbounded_channel;
+    use tokio::time::{Duration, MissedTickBehavior, interval};
+
     let mut tui = Tui::new();
     let mut xml_filter = render::XmlFilter::new();
     let width = crossterm::terminal::size().map(|(w, _)| w).unwrap_or(80);
@@ -829,21 +836,18 @@ async fn run_turn_with_tui(agent: &mut dcode_agent::Agent, input: &str) {
     let mut spinner: Option<Spinner> = Some(Spinner::new());
     let mut assistant: Option<AssistantMessage> = None;
     let mut completed_tools: Vec<ToolExecution> = Vec::new();
-    let mut active_tool: Option<ToolExecution> = None;
-    // Token tracking for status bar
+    let mut active_tools: Vec<ToolExecution> = Vec::new();
     let mut total_in = 0u32;
     let mut total_out = 0u32;
 
     macro_rules! render_state {
         () => {{
             let mut _lines: Vec<String> = Vec::new();
-            if let Some(sp) = spinner.as_mut() {
-                for mut l in sp.render(width) { _lines.push(l.render().to_string()); }
-            }
+            // Spinner is NOT included here — it renders as a bottom-right overlay instead.
             for tool in completed_tools.iter_mut() {
                 for mut l in tool.render(width) { _lines.push(l.render().to_string()); }
             }
-            if let Some(tool) = active_tool.as_mut() {
+            for tool in active_tools.iter_mut() {
                 for mut l in tool.render(width) { _lines.push(l.render().to_string()); }
             }
             if let Some(msg) = assistant.as_mut() {
@@ -853,71 +857,134 @@ async fn run_turn_with_tui(agent: &mut dcode_agent::Agent, input: &str) {
         }};
     }
 
-    // Initial render: show user message + spinner
+    // Initial render: show spinner immediately.
     tui.render_lines(render_state!());
 
     let model_name = agent.model_name().to_string();
     let ctx_window = agent.provider_context_window();
 
-    let result = agent.run_turn(input, |ev| {
-        match ev {
-            AgentEvent::TextDelta(t) => {
-                spinner.take();
-                let clean = xml_filter.push(&t);
-                if !clean.is_empty() {
-                    assistant.get_or_insert_with(AssistantMessage::new).push(&clean);
+    // Decouple the sync event callback from the async render loop via a channel.
+    // This lets us interleave event processing with a timer tick for smooth animation.
+    let (tx, mut rx) = unbounded_channel::<AgentEvent>();
+
+    let mut agent_fut = Box::pin(agent.run_turn(input, {
+        let tx = tx.clone();
+        move |ev| { let _ = tx.send(ev); }
+    }));
+
+    // 16ms tick (~60fps) drives spinner animation and flushes pending text frames.
+    // biased select! ensures events always drain first so streaming isn't delayed.
+    let mut ticker = interval(Duration::from_millis(16));
+    ticker.set_missed_tick_behavior(MissedTickBehavior::Skip);
+
+    let mut agent_result: Option<anyhow::Result<()>> = None;
+
+    loop {
+        tokio::select! {
+            biased;
+
+            // ── Events (highest priority — drain before timer) ────────────────
+            Some(ev) = rx.recv() => {
+                match ev {
+                    AgentEvent::TextDelta(t) => {
+                        if spinner.take().is_some() { clear_spinner_br(); }
+                        let clean = xml_filter.push(&t);
+                        if !clean.is_empty() {
+                            assistant.get_or_insert_with(AssistantMessage::new).push(&clean);
+                        }
+                        // Throttled render — timer tick will flush any pending frames.
+                        tui.render_lines_throttled(render_state!());
+                    }
+                    AgentEvent::ToolStart { name } => {
+                        if spinner.take().is_some() { clear_spinner_br(); }
+                        if let Some(ref mut asst) = assistant {
+                            let leftover = xml_filter.flush();
+                            if !leftover.is_empty() { asst.push(&leftover); }
+                            asst.finalize();
+                        }
+                        active_tools.push(ToolExecution::new(&name));
+                        tui.render_lines(render_state!());
+                    }
+                    AgentEvent::ToolDone { name, input: ti, result, is_error } => {
+                        let summary = summarize_input(&name, &ti);
+                        if let Some(idx) = active_tools.iter().position(|t| t.name == name) {
+                            let mut tool = active_tools.remove(idx);
+                            // Only preview output for tools where it's meaningful.
+                            let preview = if matches!(name.as_str(),
+                                "bash" | "run_command" | "grep" | "search" | "glob" | "list_files")
+                            {
+                                result
+                            } else {
+                                String::new()
+                            };
+                            tool.finish(&preview, is_error, summary);
+                            completed_tools.push(tool);
+                        }
+                        assistant = None;
+                        spinner = Some(Spinner::new());
+                        tui.render_lines(render_state!());
+                    }
+                    AgentEvent::TokenUsage { input, output } => {
+                        total_in += input;
+                        total_out += output;
+                    }
+                    AgentEvent::UserQuestion { .. } | AgentEvent::ConfirmBash { .. } => {
+                        tui.render_lines(render_state!());
+                        tui.commit();
+                    }
+                    AgentEvent::DoomLoop { tool } => {
+                        tui.commit();
+                        render::print_error(&format!(
+                            "Doom loop: '{tool}' called 3× with same args. Stopping."
+                        ));
+                    }
+                    AgentEvent::TurnDone => {
+                        if spinner.take().is_some() { clear_spinner_br(); }
+                        let leftover = xml_filter.flush();
+                        if !leftover.is_empty() {
+                            assistant.get_or_insert_with(AssistantMessage::new).push(&leftover);
+                        }
+                        if let Some(ref mut asst) = assistant { asst.finalize(); }
+                        tui.render_lines(render_state!());
+                        tui.commit();
+                        break;
+                    }
                 }
+            }
+
+            // ── Agent future completion ───────────────────────────────────────
+            result = &mut agent_fut, if agent_result.is_none() => {
+                agent_result = Some(result);
+                if agent_result.as_ref().unwrap().is_err() {
+                    // Error path: TurnDone won't arrive — drain remaining events then bail.
+                    while let Ok(ev) = rx.try_recv() {
+                        if let AgentEvent::TurnDone = ev { break; }
+                    }
+                    clear_spinner_br();
+                    tui.commit();
+                    break;
+                }
+                // Success path: TurnDone will arrive in the channel — continue draining.
+            }
+
+            // ── Render tick: animate spinner overlay + flush pending text ────
+            _ = ticker.tick() => {
                 tui.render_lines_throttled(render_state!());
-            }
-            AgentEvent::ToolStart { name } => {
-                spinner.take();
-                if let Some(ref mut asst) = assistant {
-                    let leftover = xml_filter.flush();
-                    if !leftover.is_empty() { asst.push(&leftover); }
-                    asst.finalize();
+                tui.flush_pending();
+                // Animate the bottom-right spinner overlay.
+                if let Some(ref sp) = spinner {
+                    let (frame, elapsed) = sp.overlay_parts();
+                    render_spinner_br(frame, &sp.label.clone(), &elapsed);
                 }
-                active_tool = Some(ToolExecution::new(&name));
-                tui.render_lines_throttled(render_state!());
-            }
-            AgentEvent::ToolDone { name, input: ti, result, is_error } => {
-                if let Some(mut tool) = active_tool.take() {
-                    let summary = summarize_input(&name, &ti);
-                    tool.finish(&result, is_error, summary);
-                    completed_tools.push(tool);
-                }
-                assistant = None;
-                spinner = Some(Spinner::new());
-                tui.render_lines_throttled(render_state!());
-            }
-            AgentEvent::TokenUsage { input, output } => {
-                total_in += input;
-                total_out += output;
-            }
-            AgentEvent::UserQuestion { .. } | AgentEvent::ConfirmBash { .. } => {
-                tui.render_lines(render_state!());
-                tui.commit();
-            }
-            AgentEvent::DoomLoop { tool } => {
-                tui.commit();
-                render::print_error(&format!(
-                    "Doom loop: '{tool}' called 3× with same args. Stopping."
-                ));
-            }
-            AgentEvent::TurnDone => {
-                spinner.take();
-                let leftover = xml_filter.flush();
-                if !leftover.is_empty() {
-                    assistant.get_or_insert_with(AssistantMessage::new).push(&leftover);
-                }
-                if let Some(ref mut asst) = assistant { asst.finalize(); }
-                tui.render_lines(render_state!());
-                tui.commit();
             }
         }
-    }).await;
+    }
 
-    if let Err(e) = result {
-        tui.commit();
+    // Drop the pinned future to release the mutable borrow on `agent`
+    // before we access agent.session below.
+    drop(agent_fut);
+
+    if let Some(Err(e)) = agent_result {
         render::print_error(&friendly_error(&format!("{e:#}")));
         return;
     }
@@ -929,6 +996,39 @@ async fn run_turn_with_tui(agent: &mut dcode_agent::Agent, input: &str) {
 }
 
 // ─── Model cycling ────────────────────────────────────────────────────────────
+
+// ─── Bottom-right spinner overlay ─────────────────────────────────────────────
+
+/// Write the spinner status at the bottom-right corner of the terminal.
+/// Uses cursor save/restore so it doesn't disturb the main render position.
+fn render_spinner_br(frame: &str, label: &str, elapsed: &str) {
+    use std::io::Write;
+    let (cols, rows) = crossterm::terminal::size().unwrap_or((80, 24));
+    // Format: "⠋ thinking  1.2s" — braille is 3 bytes but 1 column wide.
+    let text = format!("{frame} {label}  {elapsed}");
+    let text_cols = label.len() + elapsed.len() + 5; // frame(1) + spaces + padding
+    let col = cols.saturating_sub(text_cols as u16).max(1);
+    let _ = write!(
+        std::io::stdout(),
+        // \x1b7 = save cursor, move to position, write dimmed text, \x1b8 = restore cursor
+        "\x1b7\x1b[{rows};{col}H\x1b[38;2;102;102;102m{text}\x1b[0m\x1b8"
+    );
+    let _ = std::io::stdout().flush();
+}
+
+/// Erase the spinner from the bottom-right corner.
+fn clear_spinner_br() {
+    use std::io::Write;
+    let (cols, rows) = crossterm::terminal::size().unwrap_or((80, 24));
+    let clear_width: u16 = 28;
+    let col = cols.saturating_sub(clear_width).max(1);
+    let blanks = " ".repeat(clear_width as usize);
+    let _ = write!(
+        std::io::stdout(),
+        "\x1b7\x1b[{rows};{col}H{blanks}\x1b8"
+    );
+    let _ = std::io::stdout().flush();
+}
 
 fn cycle_model(
     agent: &mut dcode_agent::Agent,

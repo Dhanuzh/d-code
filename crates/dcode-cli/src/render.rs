@@ -79,33 +79,28 @@ impl XmlFilter {
     }
 
     pub fn flush(&mut self) -> String {
-        if !self.in_xml {
-            let s = self.pending.clone();
-            self.pending.clear();
-            s
-        } else {
-            String::new()
-        }
+        // Always flush pending — even if somehow stuck in xml mode,
+        // return what we have rather than silently dropping content.
+        let s = self.pending.clone();
+        self.pending.clear();
+        self.in_xml = false;
+        self.close_tag.clear();
+        s
     }
 }
 
+/// Only match known internal thinking tags that should be hidden from the user.
+/// Intentionally narrow — matching ALL lowercase tags caused the filter to swallow
+/// normal model output like `<br>`, `<b>`, `<code>` etc., causing the "stuck" bug.
 fn parse_open_tag(s: &str) -> Option<&str> {
     let s = s.trim();
     if !s.starts_with('<') || !s.ends_with('>') {
         return None;
     }
     let inner = &s[1..s.len() - 1];
-    if inner.is_empty() || inner.starts_with('/') || inner.contains(' ') {
-        return None;
-    }
-    if inner
-        .chars()
-        .all(|c| c.is_ascii_lowercase() || c == '_' || c == '-')
-    {
-        Some(inner)
-    } else {
-        None
-    }
+    // Only filter Anthropic/model internal thinking blocks.
+    matches!(inner, "antml_thinking" | "thinking" | "antthinking")
+        .then_some(inner)
 }
 
 // ─── Markdown renderer ────────────────────────────────────────────────────────

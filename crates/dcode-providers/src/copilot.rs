@@ -403,14 +403,15 @@ impl Provider for CopilotProvider {
         let Ok(list) = resp.json::<ModelList>().await else {
             return SUPPORTED_MODELS.iter().map(|s| s.to_string()).collect();
         };
-        // Only include models that support chat completions (capabilities.type == "chat").
-        // Models like gpt-5.3-codex are "completions"-only and fail on /chat/completions.
+        // Only include models that explicitly support chat completions.
+        // Exclude models with no capability info or capabilities.type != "chat"
+        // (e.g. gpt-5.3-codex is "completions"-only and fails on /chat/completions).
         let mut ids: Vec<String> = list.data.into_iter()
             .filter(|m| {
                 m.capabilities.as_ref()
                     .and_then(|c| c.kind.as_deref())
                     .map(|k| k == "chat")
-                    .unwrap_or(true) // include if no capability info (conservative)
+                    .unwrap_or(false) // exclude if capability info is missing
             })
             .map(|m| m.id)
             .collect();
