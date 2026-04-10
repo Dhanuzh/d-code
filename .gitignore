@@ -33,3 +33,7 @@ lcov.info
 # Temporary files
 *.tmp
 *.temp
+
+# Local reference repo and session notes
+/pi-mono/
+session.md
