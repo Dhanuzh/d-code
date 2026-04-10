@@ -14,12 +14,15 @@ const C_BULLET: &str = "\x1b[38;2;138;190;183m"; // teal
 const C_HEADING: &str = "\x1b[38;2;240;198;116m"; // gold
 const C_SUCCESS: &str = "\x1b[38;2;181;189;104m"; // green
 const C_MUTED: &str = "\x1b[38;2;128;128;128m";
+const C_THINKING: &str = "\x1b[38;2;102;102;120m"; // dim purple-gray for thinking
 const RESET: &str = "\x1b[0m";
+const ITALIC: &str = "\x1b[3m";
 
 /// Renders a streaming assistant message with markdown formatting.
 ///
 /// Accumulates text deltas, processes complete lines, keeps last partial
-/// line for live typewriter preview.
+/// line for live typewriter preview. Also renders extended thinking content
+/// in a dim/italic style above the main text.
 pub struct AssistantMessage {
     /// Complete lines already processed (stable, won't change).
     complete_lines: Vec<String>,
@@ -33,6 +36,10 @@ pub struct AssistantMessage {
     dirty: bool,
     /// Whether the message is finalized (no more deltas expected).
     finalized: bool,
+    /// Accumulated thinking content (rendered dim/italic above main text).
+    thinking_buf: String,
+    /// Whether we're currently receiving thinking content.
+    pub in_thinking: bool,
 }
 
 impl AssistantMessage {
@@ -44,7 +51,22 @@ impl AssistantMessage {
             code_lang: String::new(),
             dirty: true,
             finalized: false,
+            thinking_buf: String::new(),
+            in_thinking: false,
         }
+    }
+
+    /// Feed a thinking delta (extended reasoning content).
+    pub fn push_thinking(&mut self, delta: &str) {
+        self.thinking_buf.push_str(delta);
+        self.in_thinking = true;
+        self.dirty = true;
+    }
+
+    /// Mark thinking as complete (next text delta starts the real response).
+    pub fn end_thinking(&mut self) {
+        self.in_thinking = false;
+        self.dirty = true;
     }
 
     /// Feed a text delta from the stream.
@@ -166,11 +188,31 @@ impl Default for AssistantMessage {
 
 impl Component for AssistantMessage {
     fn render(&mut self, _width: u16) -> Vec<Line> {
-        let mut lines: Vec<Line> = self
-            .complete_lines
-            .iter()
-            .map(|s| Line::raw(s.clone()))
-            .collect();
+        let mut lines: Vec<Line> = Vec::new();
+
+        // Render thinking block first (dim/italic), if any.
+        if !self.thinking_buf.is_empty() {
+            for line in self.thinking_buf.lines() {
+                let rendered = if line.trim().is_empty() {
+                    String::new()
+                } else {
+                    format!("  {C_THINKING}{ITALIC}{line}{RESET}")
+                };
+                lines.push(Line::raw(rendered));
+            }
+            // If still receiving thinking, show live partial on last line.
+            if self.in_thinking {
+                // partial is in thinking_buf already (streamed char by char)
+            } else if !self.complete_lines.is_empty() {
+                // separator between thinking and response
+                lines.push(Line::raw(String::new()));
+            }
+        }
+
+        // Main response lines.
+        for s in &self.complete_lines {
+            lines.push(Line::raw(s.clone()));
+        }
 
         // Show partial line as typewriter preview.
         if !self.partial.is_empty() && !self.finalized {

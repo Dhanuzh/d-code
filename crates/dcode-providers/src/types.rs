@@ -86,6 +86,8 @@ pub struct ToolDef {
 pub enum StreamEvent {
     /// A delta of text in the current text block.
     TextDelta(String),
+    /// A delta of extended thinking content (streaming reasoning).
+    ThinkingDelta(String),
     /// A tool call started.
     ToolUseStart { id: String, name: String },
     /// A partial JSON fragment for the tool call input.

@@ -200,13 +200,16 @@ struct MessageStartData {
 enum ContentBlockStart {
     Text { text: String },
     ToolUse { id: String, name: String },
+    Thinking { thinking: String },
 }
 
 #[derive(Deserialize, Debug)]
 #[serde(tag = "type", rename_all = "snake_case")]
+#[allow(clippy::enum_variant_names)]
 enum ContentBlockDelta {
     TextDelta { text: String },
     InputJsonDelta { partial_json: String },
+    ThinkingDelta { thinking: String },
 }
 
 #[derive(Deserialize, Debug)]
@@ -485,12 +488,15 @@ fn translate_sse(event: SseEvent, stop_reason: &mut Option<String>) -> Vec<Strea
             ContentBlockStart::ToolUse { id, name } => {
                 vec![StreamEvent::ToolUseStart { id, name }]
             }
-            ContentBlockStart::Text { .. } => vec![],
+            ContentBlockStart::Text { .. } | ContentBlockStart::Thinking { .. } => vec![],
         },
         SseEvent::ContentBlockDelta { delta, .. } => match delta {
             ContentBlockDelta::TextDelta { text } => vec![StreamEvent::TextDelta(text)],
             ContentBlockDelta::InputJsonDelta { partial_json } => {
                 vec![StreamEvent::ToolUseDelta(partial_json)]
+            }
+            ContentBlockDelta::ThinkingDelta { thinking } => {
+                vec![StreamEvent::ThinkingDelta(thinking)]
             }
         },
         SseEvent::ContentBlockStop { .. } => vec![StreamEvent::ToolUseEnd],

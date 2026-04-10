@@ -20,6 +20,8 @@ pub use session::Session;
 pub enum AgentEvent {
     /// A chunk of assistant text (stream it live).
     TextDelta(String),
+    /// A chunk of extended thinking content (shown dim/italic).
+    ThinkingDelta(String),
     /// A tool call is starting (name only — input not yet complete).
     ToolStart { name: String },
     /// A tool call finished with result + the parsed input args.
@@ -166,6 +168,9 @@ impl Agent {
                     StreamEvent::TextDelta(t) => {
                         on_event(AgentEvent::TextDelta(t.clone()));
                         text_buf.push_str(&t);
+                    }
+                    StreamEvent::ThinkingDelta(t) => {
+                        on_event(AgentEvent::ThinkingDelta(t));
                     }
                     StreamEvent::ToolUseStart { id, name } => {
                         on_event(AgentEvent::ToolStart { name: name.clone() });

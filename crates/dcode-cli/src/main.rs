@@ -109,6 +109,7 @@ async fn run_oneshot(
 
     agent
         .run_turn(&prompt, |ev| match ev {
+            AgentEvent::ThinkingDelta(_) => {}
             AgentEvent::TextDelta(t) => {
                 let clean = xml_filter.push(&t);
                 if !clean.is_empty() {

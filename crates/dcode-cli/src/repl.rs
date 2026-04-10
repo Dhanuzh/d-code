@@ -952,8 +952,19 @@ async fn run_turn_with_tui(agent: &mut dcode_agent::Agent, input: &str) {
             // ── Events (highest priority — drain before timer) ────────────────
             Some(ev) = rx.recv() => {
                 match ev {
+                    AgentEvent::ThinkingDelta(t) => {
+                        if spinner.take().is_some() { clear_spinner_br(); }
+                        assistant.get_or_insert_with(AssistantMessage::new).push_thinking(&t);
+                        tui.render_lines_throttled(render_state!());
+                    }
                     AgentEvent::TextDelta(t) => {
                         if spinner.take().is_some() { clear_spinner_br(); }
+                        // First text after thinking — end the thinking block.
+                        if let Some(ref mut asst) = assistant {
+                            if asst.in_thinking {
+                                asst.end_thinking();
+                            }
+                        }
                         let clean = xml_filter.push(&t);
                         if !clean.is_empty() {
                             assistant.get_or_insert_with(AssistantMessage::new).push(&clean);
