@@ -945,7 +945,20 @@ impl LineEditor {
 fn open_in_editor(current: &str, out: &mut impl Write) -> io::Result<String> {
     let editor = std::env::var("VISUAL")
         .or_else(|_| std::env::var("EDITOR"))
-        .unwrap_or_else(|_| "vi".to_string());
+        .unwrap_or_else(|_| {
+            // Prefer nvim if available, fall back to vi.
+            if std::process::Command::new("nvim")
+                .arg("--version")
+                .stdout(std::process::Stdio::null())
+                .stderr(std::process::Stdio::null())
+                .status()
+                .is_ok()
+            {
+                "nvim".to_string()
+            } else {
+                "vi".to_string()
+            }
+        });
 
     let tmp_path = std::env::temp_dir().join(format!("d-code-{}.md", std::process::id()));
     std::fs::write(&tmp_path, current)?;
