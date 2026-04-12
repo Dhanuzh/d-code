@@ -940,49 +940,69 @@ impl LineEditor {
     }
 }
 
-/// Open the current input text in $VISUAL or $EDITOR, read back the result.
-/// Temporarily exits raw mode so the editor has full terminal control.
+/// Open the current input text in $VISUAL / $EDITOR (defaults to nvim then vi).
+/// Mirrors pi-mono interactive-mode openExternalEditor:
+///  1. Disable bracketed paste + raw mode (give terminal fully to the editor).
+///  2. Spawn editor synchronously with inherited stdio.
+///  3. Re-enable raw mode + bracketed paste, force full screen re-render.
 fn open_in_editor(current: &str, out: &mut impl Write) -> io::Result<String> {
     let editor = std::env::var("VISUAL")
         .or_else(|_| std::env::var("EDITOR"))
-        .unwrap_or_else(|_| {
-            // Prefer nvim if available, fall back to vi.
-            if std::process::Command::new("nvim")
-                .arg("--version")
-                .stdout(std::process::Stdio::null())
-                .stderr(std::process::Stdio::null())
-                .status()
-                .is_ok()
-            {
-                "nvim".to_string()
-            } else {
-                "vi".to_string()
-            }
-        });
+        .unwrap_or_else(|_| "nvim".to_string());
 
-    let tmp_path = std::env::temp_dir().join(format!("d-code-{}.md", std::process::id()));
+    let tmp_path = std::env::temp_dir().join(format!("d-code-edit-{}.md", std::process::id()));
     std::fs::write(&tmp_path, current)?;
 
-    // Release terminal for the editor.
+    // Clean up terminal state before handing off to the editor.
+    // Disable bracketed paste first so the editor doesn't see stale escape sequences.
+    let _ = execute!(out, DisableBracketedPaste);
     terminal::disable_raw_mode()?;
-    execute!(out, Print("\r\n"))?;
 
     let parts: Vec<&str> = editor.split_whitespace().collect();
     let status = std::process::Command::new(parts[0])
         .args(&parts[1..])
         .arg(&tmp_path)
+        .stdin(std::process::Stdio::inherit())
+        .stdout(std::process::Stdio::inherit())
+        .stderr(std::process::Stdio::inherit())
         .status();
 
-    // Re-acquire terminal.
+    // Restore terminal — always re-enable raw mode + bracketed paste regardless of editor result.
     terminal::enable_raw_mode()?;
-    // Clear screen so editor output doesn't bleed through.
+    let _ = execute!(out, EnableBracketedPaste);
+    // Full screen clear so editor UI (alternate screen restore) doesn't bleed through.
     execute!(out, Clear(ClearType::All), crossterm::cursor::MoveTo(0, 0))?;
 
-    let _ = status?;
+    match status {
+        Err(e) => {
+            // Editor binary not found — show hint and return original text.
+            execute!(
+                out,
+                SetForegroundColor(Color::Rgb {
+                    r: 204,
+                    g: 102,
+                    b: 102
+                }),
+                Print(format!(
+                    "  editor '{}' not found — set $VISUAL or $EDITOR\r\n",
+                    parts[0]
+                )),
+                ResetColor
+            )?;
+            let _ = std::fs::remove_file(&tmp_path);
+            return Err(e);
+        }
+        Ok(s) if !s.success() => {
+            // Editor exited non-zero (e.g. user quit without saving in some editors).
+            // Return original text unchanged.
+            let _ = std::fs::remove_file(&tmp_path);
+            return Ok(current.to_string());
+        }
+        Ok(_) => {}
+    }
 
     let text = std::fs::read_to_string(&tmp_path).unwrap_or_else(|_| current.to_string());
     let _ = std::fs::remove_file(&tmp_path);
-
     // Strip trailing newline editors often append.
     Ok(text.trim_end_matches('\n').to_string())
 }
