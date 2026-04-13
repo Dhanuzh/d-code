@@ -258,10 +258,14 @@ pub async fn run(cwd: PathBuf, provider_name: Option<String>) -> anyhow::Result<
                 continue;
             }
             ReadOutcome::CycleThinking => {
-                let new_level = agent.provider.thinking_level().cycle_next();
-                agent.provider.set_thinking_level(new_level);
-                editor.set_thinking_border(new_level.label());
-                render::print_info(&format!("  Thinking: {}", new_level.label()));
+                if agent.provider_name() != "anthropic" {
+                    render::print_info("  Thinking is only supported with Anthropic.");
+                } else {
+                    let new_level = agent.provider.thinking_level().cycle_next();
+                    agent.provider.set_thinking_level(new_level);
+                    editor.set_thinking_border(new_level.label());
+                    render::print_info(&format!("  Thinking: {}", new_level.label()));
+                }
                 continue;
             }
             ReadOutcome::Submit(line) => {
@@ -794,6 +798,7 @@ pub async fn run(cwd: PathBuf, provider_name: Option<String>) -> anyhow::Result<
                                         agent.replace_provider(provider);
                                         agent.refresh_system_prompt();
                                         editor.set_prompt(make_prompt(&provider_info, None, &cwd));
+                                        editor.set_thinking_border("off");
                                         save_model(&provider_info, &dcode_dir);
                                         let fresh_store =
                                             dcode_providers::AuthStore::load().unwrap_or_default();
@@ -809,6 +814,7 @@ pub async fn run(cwd: PathBuf, provider_name: Option<String>) -> anyhow::Result<
                         provider_info = format!("{}/{}", provider.name(), provider.model());
                         agent.replace_provider(provider);
                         editor.set_prompt(make_prompt(&provider_info, None, &cwd));
+                        editor.set_thinking_border("off");
                         save_model(&provider_info, &dcode_dir);
                         let fresh_store = dcode_providers::AuthStore::load().unwrap_or_default();
                         render::print_welcome_banner(&provider_info, &fresh_store);
@@ -1167,6 +1173,7 @@ fn cycle_model(
                 .map(|b| format!(" \x1b[2m\x1b[38;5;179m{b}\x1b[0m"))
                 .unwrap_or_default();
             editor.set_prompt(format!(" {}{} ▸ ", provider_info, branch));
+            editor.set_thinking_border("off");
             save_model(provider_info, dcode_dir);
             render::print_info(&format!("Switched to {provider_info}"));
         }
