@@ -421,10 +421,15 @@ impl Provider for CopilotProvider {
         // Only include models that explicitly support chat completions.
         // Exclude models with no capability info or capabilities.type != "chat"
         // (e.g. gpt-5.3-codex is "completions"-only and fails on /chat/completions).
+        // Also hard-deny known completions-only models regardless of API metadata.
+        const CHAT_DENYLIST: &[&str] = &["gpt-5.3-codex", "codex"];
         let mut ids: Vec<String> = list
             .data
             .into_iter()
             .filter(|m| {
+                if CHAT_DENYLIST.iter().any(|d| m.id.contains(d)) {
+                    return false;
+                }
                 m.capabilities
                     .as_ref()
                     .and_then(|c| c.kind.as_deref())
@@ -448,6 +453,15 @@ impl Provider for CopilotProvider {
         tools: &[ToolDef],
         max_tokens: u32,
     ) -> anyhow::Result<Pin<Box<dyn Stream<Item = anyhow::Result<StreamEvent>> + Send>>> {
+        // Reject known completions-only models before making the request.
+        const CHAT_DENYLIST: &[&str] = &["gpt-5.3-codex", "codex"];
+        if CHAT_DENYLIST.iter().any(|d| self.model.contains(d)) {
+            anyhow::bail!(
+                "Model '{}' only supports the completions endpoint, not chat. \
+                 Switch to a chat model (e.g. gpt-4o, gpt-4.1) with /model.",
+                self.model
+            );
+        }
         let copilot_token = self.fresh_copilot_token().await?;
 
         let mut api_messages = vec![serde_json::json!({"role":"system","content":system})];
