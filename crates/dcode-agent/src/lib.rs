@@ -32,7 +32,12 @@ pub enum AgentEvent {
         is_error: bool,
     },
     /// Token usage update.
-    TokenUsage { input: u32, output: u32 },
+    TokenUsage {
+        input: u32,
+        output: u32,
+        cache_write: u32,
+        cache_read: u32,
+    },
     /// The agent detected a doom loop and stopped.
     DoomLoop { tool: String },
     /// The agent is asking the user a question (ask_user tool).
@@ -197,11 +202,15 @@ impl Agent {
                     StreamEvent::Usage {
                         input_tokens,
                         output_tokens,
+                        cache_write_tokens,
+                        cache_read_tokens,
                     } => {
                         self.session.record_usage(input_tokens, output_tokens);
                         on_event(AgentEvent::TokenUsage {
                             input: input_tokens,
                             output: output_tokens,
+                            cache_write: cache_write_tokens,
+                            cache_read: cache_read_tokens,
                         });
                     }
                     StreamEvent::Done { stop_reason: r } => {

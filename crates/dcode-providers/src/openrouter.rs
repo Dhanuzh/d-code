@@ -372,6 +372,8 @@ fn translate_oai_chunk(
         out.push(StreamEvent::Usage {
             input_tokens: usage["prompt_tokens"].as_u64().unwrap_or(0) as u32,
             output_tokens: usage["completion_tokens"].as_u64().unwrap_or(0) as u32,
+            cache_write_tokens: 0,
+            cache_read_tokens: 0,
         });
     }
     out

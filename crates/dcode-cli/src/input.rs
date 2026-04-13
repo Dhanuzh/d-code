@@ -24,6 +24,8 @@ pub enum ReadOutcome {
     CycleModel {
         forward: bool,
     },
+    /// Shift-Tab — cycle extended thinking level.
+    CycleThinking,
 }
 
 // ─── Raw mode guard ───────────────────────────────────────────────────────────
@@ -241,6 +243,10 @@ pub struct LineEditor {
     prompt: String,
     pub history: Vec<String>,
     completions: Vec<String>,
+    /// RGB color for the top border (default: dim gray).
+    border_color: (u8, u8, u8),
+    /// Optional label shown inside the top border (e.g. "thinking: low").
+    border_label: String,
 }
 
 impl LineEditor {
@@ -249,11 +255,28 @@ impl LineEditor {
             prompt: prompt.into(),
             history: Vec::new(),
             completions,
+            border_color: (55, 60, 72),
+            border_label: String::new(),
         }
     }
 
     pub fn set_prompt(&mut self, prompt: impl Into<String>) {
         self.prompt = prompt.into();
+    }
+
+    /// Set border color and optional label based on thinking level.
+    /// Call this whenever the thinking level changes.
+    pub fn set_thinking_border(&mut self, level_label: &str) {
+        let (color, label) = match level_label {
+            "off" | "" => ((55, 60, 72), String::new()),
+            "low" => ((80, 120, 80), format!("🧠 thinking: {level_label}")),
+            "medium" => ((130, 120, 50), format!("🧠 thinking: {level_label}")),
+            "high" => ((160, 100, 40), format!("🧠 thinking: {level_label}")),
+            "max" => ((180, 60, 60), format!("🧠 thinking: {level_label}")),
+            other => ((55, 60, 72), format!("🧠 thinking: {other}")),
+        };
+        self.border_color = color;
+        self.border_label = label;
     }
 
     pub fn push_history(&mut self, entry: impl Into<String>) {
@@ -554,6 +577,14 @@ impl LineEditor {
                     code: KeyCode::Delete,
                     ..
                 } => sess.delete(),
+                // ── Shift-Tab: cycle thinking level ──────────────────────
+                KeyEvent {
+                    code: KeyCode::BackTab, ..
+                } => {
+                    self.erase(&mut sess, &mut out)?;
+                    execute!(out, Print("\r\n"))?;
+                    return Ok(ReadOutcome::CycleThinking);
+                }
                 // ── Tab: cycle completions ────────────────────────────────
                 KeyEvent {
                     code: KeyCode::Tab, ..
@@ -620,6 +651,38 @@ impl LineEditor {
         }
         queue!(out, MoveToColumn(0), Clear(ClearType::FromCursorDown))?;
 
+        // ── Top border (pi-mono style) ─────────────────────────────────────────
+        let (br, bg, bb) = self.border_color;
+        let term_width = terminal::size()
+            .map(|(w, _)| w as usize)
+            .unwrap_or(80);
+        let border_ansi = format!("\x1b[38;2;{br};{bg};{bb}m");
+        if self.border_label.is_empty() {
+            // Simple horizontal line.
+            queue!(
+                out,
+                Print(format!("{border_ansi}{}\x1b[0m\r\n", "─".repeat(term_width.max(1)))),
+                MoveToColumn(0),
+            )?;
+        } else {
+            // Line with label embedded: ── [label] ──────
+            // We need to compute visual width of the label (strip emoji etc.).
+            let label_vis: usize = self.border_label.chars().count() + 2; // +2 for spaces
+            let total_dashes = term_width.saturating_sub(label_vis + 2); // 2 for " " padding
+            let left_dashes = 2usize;
+            let right_dashes = total_dashes.saturating_sub(left_dashes);
+            queue!(
+                out,
+                Print(format!(
+                    "{border_ansi}{} {} {}\x1b[0m\r\n",
+                    "─".repeat(left_dashes),
+                    self.border_label,
+                    "─".repeat(right_dashes),
+                )),
+                MoveToColumn(0),
+            )?;
+        }
+
         let matches = self.dropdown_matches(&sess.text);
         // Show up to (terminal_height - 6) items so the dropdown never fills the screen.
         let max_visible = terminal::size()
@@ -675,8 +738,8 @@ impl LineEditor {
             const RST: &str = "\x1b[0m";
             let hints = format!(
                 "  {DIM}^C{RST} {MUTED}exit{RST}  {DIM}^G{RST} {MUTED}editor{RST}  \
-                 {DIM}^P/N{RST} {MUTED}model{RST}  {DIM}Shift+↵{RST} {MUTED}newline{RST}  \
-                 {DIM}/{RST} {MUTED}commands{RST}"
+                 {DIM}^P/N{RST} {MUTED}model{RST}  {DIM}Shift-Tab{RST} {MUTED}thinking{RST}  \
+                 {DIM}Shift+↵{RST} {MUTED}newline{RST}  {DIM}/{RST} {MUTED}commands{RST}"
             );
             queue!(
                 out,
@@ -893,8 +956,8 @@ impl LineEditor {
         }
         queue!(out, MoveToColumn(cursor_col as u16))?;
 
-        // Track state for next render.
-        sess.rendered_rows = dropdown_count + visual_total_rows + hints_extra;
+        // Track state for next render. +1 for the top border line.
+        sess.rendered_rows = dropdown_count + visual_total_rows + hints_extra + 1;
         sess.cursor_row_offset = rows_below_cursor;
 
         out.flush()

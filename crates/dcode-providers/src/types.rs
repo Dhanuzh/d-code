@@ -98,6 +98,10 @@ pub enum StreamEvent {
     Usage {
         input_tokens: u32,
         output_tokens: u32,
+        /// Prompt-cache tokens written this request (Anthropic prompt caching).
+        cache_write_tokens: u32,
+        /// Prompt-cache tokens read this request (Anthropic prompt caching).
+        cache_read_tokens: u32,
     },
     /// The model has finished (end_turn, tool_use, max_tokens, etc.).
     Done { stop_reason: StopReason },
@@ -118,6 +122,53 @@ impl StopReason {
             "tool_use" => Self::ToolUse,
             "max_tokens" => Self::MaxTokens,
             other => Self::Other(other.to_string()),
+        }
+    }
+}
+
+// ── Thinking level ─────────────────────────────────────────────────────────────
+
+/// Extended thinking budget levels (mirrors pi-mono ThinkingLevel).
+/// Maps to Anthropic `thinking.budget_tokens` values.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum ThinkingLevel {
+    #[default]
+    Off,
+    Low,    // ~2k tokens
+    Medium, // ~8k tokens
+    High,   // ~16k tokens
+    Max,    // ~32k tokens
+}
+
+impl ThinkingLevel {
+    /// Token budget for this level. None means thinking is disabled.
+    pub fn budget_tokens(self) -> Option<u32> {
+        match self {
+            Self::Off => None,
+            Self::Low => Some(2_000),
+            Self::Medium => Some(8_000),
+            Self::High => Some(16_000),
+            Self::Max => Some(32_000),
+        }
+    }
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Off => "off",
+            Self::Low => "low",
+            Self::Medium => "medium",
+            Self::High => "high",
+            Self::Max => "max",
+        }
+    }
+
+    pub fn cycle_next(self) -> Self {
+        match self {
+            Self::Off => Self::Low,
+            Self::Low => Self::Medium,
+            Self::Medium => Self::High,
+            Self::High => Self::Max,
+            Self::Max => Self::Off,
         }
     }
 }

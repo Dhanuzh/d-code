@@ -257,6 +257,13 @@ pub async fn run(cwd: PathBuf, provider_name: Option<String>) -> anyhow::Result<
                 )?;
                 continue;
             }
+            ReadOutcome::CycleThinking => {
+                let new_level = agent.provider.thinking_level().cycle_next();
+                agent.provider.set_thinking_level(new_level);
+                editor.set_thinking_border(new_level.label());
+                render::print_info(&format!("  Thinking: {}", new_level.label()));
+                continue;
+            }
             ReadOutcome::Submit(line) => {
                 let input = line.trim().to_string();
                 if input.is_empty() {
@@ -283,6 +290,8 @@ pub async fn run(cwd: PathBuf, provider_name: Option<String>) -> anyhow::Result<
                             render::print_turn_footer(
                                 agent.session.total_input_tokens,
                                 agent.session.total_output_tokens,
+                                0,
+                                0,
                                 agent.model_name(),
                                 agent.provider_context_window(),
                                 agent.session.estimated_tokens() as u32,
@@ -906,6 +915,8 @@ async fn run_turn_with_tui(agent: &mut dcode_agent::Agent, input: &str) {
     let mut active_tools: Vec<ToolExecution> = Vec::new();
     let mut total_in = 0u32;
     let mut total_out = 0u32;
+    let mut total_cache_write = 0u32;
+    let mut total_cache_read = 0u32;
 
     macro_rules! render_state {
         () => {{
@@ -1010,9 +1021,11 @@ async fn run_turn_with_tui(agent: &mut dcode_agent::Agent, input: &str) {
                         spinner = Some(Spinner::new());
                         tui.render_lines(render_state!());
                     }
-                    AgentEvent::TokenUsage { input, output } => {
+                    AgentEvent::TokenUsage { input, output, cache_write, cache_read } => {
                         total_in += input;
                         total_out += output;
+                        total_cache_write += cache_write;
+                        total_cache_read += cache_read;
                     }
                     AgentEvent::UserQuestion { .. } | AgentEvent::ConfirmBash { .. } => {
                         tui.render_lines(render_state!());
@@ -1077,7 +1090,7 @@ async fn run_turn_with_tui(agent: &mut dcode_agent::Agent, input: &str) {
 
     // Footer: token counts, cost, context% — mirrors pi-mono footer.ts
     let ctx_used = agent.session.estimated_tokens() as u32;
-    render::print_turn_footer(total_in, total_out, &model_name, ctx_window, ctx_used);
+    render::print_turn_footer(total_in, total_out, total_cache_write, total_cache_read, &model_name, ctx_window, ctx_used);
     println!();
 }
 

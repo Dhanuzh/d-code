@@ -15,7 +15,13 @@ const RESET: &str = "\x1b[0m";
 pub struct StatusBar {
     pub total_input: u32,
     pub total_output: u32,
+    /// Prompt-cache tokens written this session (Anthropic only).
+    pub cache_write: u32,
+    /// Prompt-cache tokens read this session (Anthropic only).
+    pub cache_read: u32,
     pub model: String,
+    /// Provider name badge, e.g. "anthropic", "copilot". Empty = hidden.
+    pub provider: String,
     pub context_used: u32,
     pub context_window: u32,
     pub cost_usd: f64,
@@ -23,6 +29,10 @@ pub struct StatusBar {
     pub cwd: String,
     /// Git branch, e.g. "main"
     pub branch: String,
+    /// Session name, shown if set.
+    pub session_name: String,
+    /// Thinking level label ("off" → hidden, else "low"/"medium"/"high"/"max").
+    pub thinking_label: String,
     dirty: bool,
 }
 
@@ -31,21 +41,51 @@ impl StatusBar {
         Self {
             total_input: 0,
             total_output: 0,
+            cache_write: 0,
+            cache_read: 0,
             model: model.into(),
+            provider: String::new(),
             context_used: 0,
             context_window,
             cost_usd: 0.0,
             cwd: String::new(),
             branch: String::new(),
+            session_name: String::new(),
+            thinking_label: String::new(),
             dirty: true,
         }
     }
 
-    pub fn update(&mut self, input: u32, output: u32, context_used: u32, cost_usd: f64) {
+    pub fn update(
+        &mut self,
+        input: u32,
+        output: u32,
+        cache_write: u32,
+        cache_read: u32,
+        context_used: u32,
+        cost_usd: f64,
+    ) {
         self.total_input = input;
         self.total_output = output;
+        self.cache_write = cache_write;
+        self.cache_read = cache_read;
         self.context_used = context_used;
         self.cost_usd = cost_usd;
+        self.dirty = true;
+    }
+
+    pub fn set_provider(&mut self, provider: impl Into<String>) {
+        self.provider = provider.into();
+        self.dirty = true;
+    }
+
+    pub fn set_thinking(&mut self, label: impl Into<String>) {
+        self.thinking_label = label.into();
+        self.dirty = true;
+    }
+
+    pub fn set_session_name(&mut self, name: impl Into<String>) {
+        self.session_name = name.into();
         self.dirty = true;
     }
 
@@ -96,13 +136,19 @@ impl Component for StatusBar {
             ""
         }; // default (no extra color, dimmed by wrapper)
 
-        // Stats: ↑in ↓out $cost ctx%/window
+        // Stats: ↑in ↓out [⚡write ♻read] $cost ctx%/window
         let mut stat_parts: Vec<String> = Vec::new();
         if self.total_input > 0 {
             stat_parts.push(format!("↑{}", fmt_tokens(self.total_input)));
         }
         if self.total_output > 0 {
             stat_parts.push(format!("↓{}", fmt_tokens(self.total_output)));
+        }
+        if self.cache_write > 0 {
+            stat_parts.push(format!("⚡{}", fmt_tokens(self.cache_write)));
+        }
+        if self.cache_read > 0 {
+            stat_parts.push(format!("♻{}", fmt_tokens(self.cache_read)));
         }
         if self.cost_usd > 0.0 {
             stat_parts.push(format!("${:.3}", self.cost_usd));
@@ -117,10 +163,25 @@ impl Component for StatusBar {
                 stat_parts.push(format!("{RESET}{ctx_color}{ctx_str}{RESET}{C_DIM}"));
             }
         }
+        // Thinking level badge (hidden when "off").
+        if !self.thinking_label.is_empty() && self.thinking_label != "off" {
+            stat_parts.push(format!("🧠{}", self.thinking_label));
+        }
         let stats_left = stat_parts.join(" ");
         let stats_left_vis = strip_ansi_len(&stats_left);
 
-        let model_right = &self.model;
+        // Right side: [session name  ·] [provider/]model
+        let mut right_parts: Vec<String> = Vec::new();
+        if !self.session_name.is_empty() {
+            right_parts.push(self.session_name.clone());
+        }
+        let model_label = if !self.provider.is_empty() {
+            format!("{}/{}", self.provider, self.model)
+        } else {
+            self.model.clone()
+        };
+        right_parts.push(model_label);
+        let model_right = right_parts.join("  · ");
         let model_vis = model_right.len();
 
         let gap = w.saturating_sub(stats_left_vis + model_vis + 2); // +2 min padding

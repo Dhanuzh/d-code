@@ -3,7 +3,7 @@ use std::pin::Pin;
 use async_trait::async_trait;
 use futures::Stream;
 
-use crate::types::{Message, StreamEvent, ToolDef};
+use crate::types::{Message, StreamEvent, ThinkingLevel, ToolDef};
 
 /// Unified interface for all AI providers.
 #[async_trait]
@@ -23,6 +23,12 @@ pub trait Provider: Send + Sync {
         tools: &[ToolDef],
         max_tokens: u32,
     ) -> anyhow::Result<Pin<Box<dyn Stream<Item = anyhow::Result<StreamEvent>> + Send>>>;
+
+    /// Set extended thinking budget. Default no-op (only Anthropic supports it).
+    fn set_thinking_level(&mut self, _level: ThinkingLevel) {}
+    fn thinking_level(&self) -> ThinkingLevel {
+        ThinkingLevel::Off
+    }
 }
 
 /// Boxed provider alias.

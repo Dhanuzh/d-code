@@ -1414,6 +1414,8 @@ fn model_cost_rates(model: &str) -> (f64, f64) {
 pub fn print_turn_footer(
     total_in: u32,
     total_out: u32,
+    cache_write: u32,
+    cache_read: u32,
     model: &str,
     ctx_window: u32,
     ctx_used: u32,
@@ -1483,6 +1485,12 @@ pub fn print_turn_footer(
     if total_out > 0 {
         stat_parts.push(format!("↓{}", fmt_tokens(total_out)));
     }
+    if cache_write > 0 {
+        stat_parts.push(format!("⚡{}", fmt_tokens(cache_write)));
+    }
+    if cache_read > 0 {
+        stat_parts.push(format!("♻{}", fmt_tokens(cache_read)));
+    }
     if !cost_str.is_empty() {
         stat_parts.push(cost_str);
     }
@@ -1495,6 +1503,12 @@ pub fn print_turn_footer(
         }
         if total_out > 0 {
             parts_for_len.push(format!("↓{}", fmt_tokens(total_out)));
+        }
+        if cache_write > 0 {
+            parts_for_len.push(format!("⚡{}", fmt_tokens(cache_write)));
+        }
+        if cache_read > 0 {
+            parts_for_len.push(format!("♻{}", fmt_tokens(cache_read)));
         }
         // cost_str length
         let cost_raw = if cost >= 0.01 {

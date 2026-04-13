@@ -298,7 +298,7 @@ fn parse_gemini_sse(
                             let input = usage["promptTokenCount"].as_u64().unwrap_or(0) as u32;
                             let output = usage["candidatesTokenCount"].as_u64().unwrap_or(0) as u32;
                             if !usage_sent && (input > 0 || output > 0) {
-                                yield Ok(StreamEvent::Usage { input_tokens: input, output_tokens: output });
+                                yield Ok(StreamEvent::Usage { input_tokens: input, output_tokens: output, cache_write_tokens: 0, cache_read_tokens: 0 });
                                 usage_sent = true;
                             }
                         }

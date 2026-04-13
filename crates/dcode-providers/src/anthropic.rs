@@ -9,7 +9,8 @@ use serde::Deserialize;
 use crate::oauth::{generate_pkce, url_encode};
 use crate::provider::Provider;
 use crate::types::{
-    AuthStore, ContentBlock, Message, ProviderAuth, Role, StopReason, StreamEvent, ToolDef,
+    AuthStore, ContentBlock, Message, ProviderAuth, Role, StopReason, StreamEvent, ThinkingLevel,
+    ToolDef,
 };
 
 // ── OAuth constants ────────────────────────────────────────────────────────────
@@ -129,6 +130,7 @@ pub struct AnthropicProvider {
     pub model: String,
     token: String,
     client: reqwest::Client,
+    thinking_level: ThinkingLevel,
 }
 
 impl AnthropicProvider {
@@ -148,6 +150,7 @@ impl AnthropicProvider {
         Self {
             model: model.into(),
             token: token.into(),
+            thinking_level: ThinkingLevel::Off,
             client: reqwest::Client::builder()
                 .connection_verbose(false)
                 .pool_max_idle_per_host(4)
@@ -221,6 +224,8 @@ struct MessageDeltaData {
 struct UsageData {
     input_tokens: Option<u32>,
     output_tokens: Option<u32>,
+    cache_creation_input_tokens: Option<u32>,
+    cache_read_input_tokens: Option<u32>,
 }
 
 // ── Request / response types ──────────────────────────────────────────────────
@@ -364,6 +369,14 @@ impl Provider for AnthropicProvider {
         SUPPORTED_MODELS.iter().map(|s| s.to_string()).collect()
     }
 
+    fn set_thinking_level(&mut self, level: ThinkingLevel) {
+        self.thinking_level = level;
+    }
+
+    fn thinking_level(&self) -> ThinkingLevel {
+        self.thinking_level
+    }
+
     async fn chat_stream(
         &self,
         system: &str,
@@ -387,6 +400,20 @@ impl Provider for AnthropicProvider {
             "system": system_block,
             "messages": messages_to_api_with_cache(messages),
         });
+
+        // Extended thinking: inject thinking block and raise output budget.
+        if let Some(budget) = self.thinking_level.budget_tokens() {
+            body["thinking"] = serde_json::json!({
+                "type": "enabled",
+                "budget_tokens": budget,
+            });
+            // Thinking requires max_tokens > budget_tokens.
+            let needed = budget + 1_000;
+            if max_tokens < needed {
+                body["max_tokens"] = serde_json::json!(needed);
+            }
+        }
+
         if !tools.is_empty() {
             // Cache the entire tools block (last tool gets the breakpoint marker).
             let mut tools_json = tools_to_api(tools);
@@ -396,12 +423,19 @@ impl Provider for AnthropicProvider {
             body["tools"] = serde_json::json!(tools_json);
         }
 
+        // Build beta header: always include prompt-caching; add interleaved-thinking when active.
+        let beta_header = if self.thinking_level != ThinkingLevel::Off {
+            "prompt-caching-2024-07-31,interleaved-thinking-2025-05-14"
+        } else {
+            "prompt-caching-2024-07-31"
+        };
+
         let resp = self
             .client
             .post(&url)
             .header("x-api-key", &self.token)
             .header("anthropic-version", API_VERSION)
-            .header("anthropic-beta", "prompt-caching-2024-07-31")
+            .header("anthropic-beta", beta_header)
             .header("content-type", "application/json")
             .header("User-Agent", USER_AGENT)
             .json(&body)
@@ -433,6 +467,8 @@ fn parse_anthropic_sse(
 
         let mut buf = String::new();
         let mut stop_reason: Option<String> = None;
+        // Track whether the current content block is a tool_use block.
+        let mut current_block_is_tool = false;
 
         while let Some(chunk) = byte_stream.next().await {
             let chunk = chunk.context("SSE read error")?;
@@ -450,7 +486,7 @@ fn parse_anthropic_sse(
                     }
                     match serde_json::from_str::<SseEvent>(data) {
                         Ok(event) => {
-                            for ev in translate_sse(event, &mut stop_reason) {
+                            for ev in translate_sse(event, &mut stop_reason, &mut current_block_is_tool) {
                                 yield Ok(ev);
                             }
                         }
@@ -472,13 +508,19 @@ fn parse_anthropic_sse(
     }
 }
 
-fn translate_sse(event: SseEvent, stop_reason: &mut Option<String>) -> Vec<StreamEvent> {
+fn translate_sse(
+    event: SseEvent,
+    stop_reason: &mut Option<String>,
+    current_block_is_tool: &mut bool,
+) -> Vec<StreamEvent> {
     match event {
         SseEvent::MessageStart { message } => {
             if let Some(u) = message.usage {
                 vec![StreamEvent::Usage {
                     input_tokens: u.input_tokens.unwrap_or(0),
                     output_tokens: u.output_tokens.unwrap_or(0),
+                    cache_write_tokens: u.cache_creation_input_tokens.unwrap_or(0),
+                    cache_read_tokens: u.cache_read_input_tokens.unwrap_or(0),
                 }]
             } else {
                 vec![]
@@ -486,9 +528,13 @@ fn translate_sse(event: SseEvent, stop_reason: &mut Option<String>) -> Vec<Strea
         }
         SseEvent::ContentBlockStart { content_block, .. } => match content_block {
             ContentBlockStart::ToolUse { id, name } => {
+                *current_block_is_tool = true;
                 vec![StreamEvent::ToolUseStart { id, name }]
             }
-            ContentBlockStart::Text { .. } | ContentBlockStart::Thinking { .. } => vec![],
+            ContentBlockStart::Text { .. } | ContentBlockStart::Thinking { .. } => {
+                *current_block_is_tool = false;
+                vec![]
+            }
         },
         SseEvent::ContentBlockDelta { delta, .. } => match delta {
             ContentBlockDelta::TextDelta { text } => vec![StreamEvent::TextDelta(text)],
@@ -499,7 +545,14 @@ fn translate_sse(event: SseEvent, stop_reason: &mut Option<String>) -> Vec<Strea
                 vec![StreamEvent::ThinkingDelta(thinking)]
             }
         },
-        SseEvent::ContentBlockStop { .. } => vec![StreamEvent::ToolUseEnd],
+        SseEvent::ContentBlockStop { .. } => {
+            if *current_block_is_tool {
+                *current_block_is_tool = false;
+                vec![StreamEvent::ToolUseEnd]
+            } else {
+                vec![]
+            }
+        }
         SseEvent::MessageDelta { delta, usage } => {
             let mut out = vec![];
             if let Some(reason) = delta.stop_reason {
@@ -509,6 +562,8 @@ fn translate_sse(event: SseEvent, stop_reason: &mut Option<String>) -> Vec<Strea
                 out.push(StreamEvent::Usage {
                     input_tokens: u.input_tokens.unwrap_or(0),
                     output_tokens: u.output_tokens.unwrap_or(0),
+                    cache_write_tokens: u.cache_creation_input_tokens.unwrap_or(0),
+                    cache_read_tokens: u.cache_read_input_tokens.unwrap_or(0),
                 });
             }
             out
