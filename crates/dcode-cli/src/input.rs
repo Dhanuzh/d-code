@@ -265,15 +265,15 @@ impl LineEditor {
     }
 
     /// Set border color and optional label based on thinking level.
-    /// Call this whenever the thinking level changes.
+    /// Colors from pi-mono dark theme: thinkingLow=#5f87af, medium=#81a2be, high=#b294bb, max=#d183e8.
     pub fn set_thinking_border(&mut self, level_label: &str) {
         let (color, label) = match level_label {
-            "off" | "" => ((55, 60, 72), String::new()),
-            "low" => ((80, 120, 80), format!("🧠 thinking: {level_label}")),
-            "medium" => ((130, 120, 50), format!("🧠 thinking: {level_label}")),
-            "high" => ((160, 100, 40), format!("🧠 thinking: {level_label}")),
-            "max" => ((180, 60, 60), format!("🧠 thinking: {level_label}")),
-            other => ((55, 60, 72), format!("🧠 thinking: {other}")),
+            "off" | "" => ((60, 65, 80), String::new()),
+            "low" => ((95, 135, 175), format!("thinking: {level_label}")),
+            "medium" => ((129, 162, 190), format!("thinking: {level_label}")),
+            "high" => ((178, 148, 187), format!("thinking: {level_label}")),
+            "max" => ((209, 131, 232), format!("thinking: {level_label}")),
+            other => ((95, 135, 175), format!("thinking: {other}")),
         };
         self.border_color = color;
         self.border_label = label;
@@ -651,33 +651,33 @@ impl LineEditor {
         }
         queue!(out, MoveToColumn(0), Clear(ClearType::FromCursorDown))?;
 
-        // ── Top border (pi-mono style) ─────────────────────────────────────────
+        // ── Top border (pi-mono style input box) ──────────────────────────────
         let (br, bg, bb) = self.border_color;
         let term_width = terminal::size()
             .map(|(w, _)| w as usize)
             .unwrap_or(80);
-        let border_ansi = format!("\x1b[38;2;{br};{bg};{bb}m");
+        let border_c = format!("\x1b[38;2;{br};{bg};{bb}m");
         if self.border_label.is_empty() {
-            // Simple horizontal line.
+            // Clean horizontal line with rounded corners.
+            let inner = term_width.saturating_sub(2);
             queue!(
                 out,
-                Print(format!("{border_ansi}{}\x1b[0m\r\n", "─".repeat(term_width.max(1)))),
+                Print(format!("{border_c}╭{}╮\x1b[0m\r\n", "─".repeat(inner))),
                 MoveToColumn(0),
             )?;
         } else {
-            // Line with label embedded: ── [label] ──────
-            // We need to compute visual width of the label (strip emoji etc.).
-            let label_vis: usize = self.border_label.chars().count() + 2; // +2 for spaces
-            let total_dashes = term_width.saturating_sub(label_vis + 2); // 2 for " " padding
-            let left_dashes = 2usize;
-            let right_dashes = total_dashes.saturating_sub(left_dashes);
+            // Border with label: ╭── thinking: low ─────────────────╮
+            let label = &self.border_label;
+            let label_vis = label.chars().count() + 2; // spaces around label
+            let inner = term_width.saturating_sub(2); // minus ╭ and ╮
+            let left = 2usize;
+            let right = inner.saturating_sub(left + label_vis);
             queue!(
                 out,
                 Print(format!(
-                    "{border_ansi}{} {} {}\x1b[0m\r\n",
-                    "─".repeat(left_dashes),
-                    self.border_label,
-                    "─".repeat(right_dashes),
+                    "{border_c}╭{} \x1b[1m{label}\x1b[22m{border_c} {}╮\x1b[0m\r\n",
+                    "─".repeat(left),
+                    "─".repeat(right),
                 )),
                 MoveToColumn(0),
             )?;
@@ -696,10 +696,11 @@ impl LineEditor {
             // +2 borders, +1 "more" line when truncated
         };
 
-        // ── Prompt ────────────────────────────────────────────────────────────
-        // Accent teal, matching pi-mono's primary color
+        // ── Prompt with left border ────────────────────────────────────────────
+        let border_prefix = format!("\x1b[38;2;{br};{bg};{bb}m│\x1b[0m ");
         queue!(
             out,
+            Print(&border_prefix),
             SetForegroundColor(Color::Rgb {
                 r: 138,
                 g: 190,
@@ -722,24 +723,26 @@ impl LineEditor {
             queue!(
                 out,
                 SetForegroundColor(Color::Rgb {
-                    r: 55,
-                    g: 60,
-                    b: 72
+                    r: 80,
+                    g: 85,
+                    b: 100
                 }),
                 SetAttribute(Attribute::Italic),
                 Print("Message…"),
                 ResetColor,
                 SetAttribute(Attribute::Reset),
             )?;
-            // Keybinding hints on a new line below (shown only when input is empty).
-            // Pi-mono style: dim key + muted description pairs.
-            const DIM: &str = "\x1b[38;2;102;102;102m";
-            const MUTED: &str = "\x1b[38;2;128;128;128m";
+            // Keybinding hints below, inside the box.
+            const DIM: &str = "\x1b[38;2;80;85;100m";
+            const MUTED: &str = "\x1b[38;2;110;115;130m";
             const RST: &str = "\x1b[0m";
             let hints = format!(
-                "  {DIM}^C{RST} {MUTED}exit{RST}  {DIM}^G{RST} {MUTED}editor{RST}  \
-                 {DIM}^P/N{RST} {MUTED}model{RST}  {DIM}Shift-Tab{RST} {MUTED}thinking{RST}  \
-                 {DIM}Shift+↵{RST} {MUTED}newline{RST}  {DIM}/{RST} {MUTED}commands{RST}"
+                "{border_prefix}{DIM}^C{RST} {MUTED}exit{RST}  \
+                 {DIM}^G{RST} {MUTED}editor{RST}  \
+                 {DIM}^P/N{RST} {MUTED}model{RST}  \
+                 {DIM}S-Tab{RST} {MUTED}thinking{RST}  \
+                 {DIM}S+↵{RST} {MUTED}newline{RST}  \
+                 {DIM}/{RST} {MUTED}cmds{RST}"
             );
             queue!(
                 out,
@@ -748,18 +751,28 @@ impl LineEditor {
                 Print(hints),
                 Clear(ClearType::UntilNewLine),
             )?;
+            // Bottom border.
+            let inner = term_width.saturating_sub(2);
+            queue!(
+                out,
+                Print("\r\n"),
+                MoveToColumn(0),
+                Print(format!("{border_c}╰{}╯\x1b[0m", "─".repeat(inner))),
+                Clear(ClearType::UntilNewLine),
+            )?;
         } else {
             for (i, line) in lines.iter().enumerate() {
                 if i > 0 {
-                    // Continuation line indicator.
+                    // Continuation line with left border.
                     queue!(
                         out,
+                        Print(&border_prefix),
                         SetForegroundColor(Color::Rgb {
-                            r: 60,
-                            g: 65,
-                            b: 78
+                            r: 80,
+                            g: 85,
+                            b: 100
                         }),
-                        Print("  ↳ "),
+                        Print("↳ "),
                         ResetColor,
                     )?;
                 }
@@ -778,17 +791,29 @@ impl LineEditor {
                 }
             }
 
-            // Multiline badge: show line count on same row after the last line.
+            // Multiline badge.
             if n_lines > 1 {
                 queue!(
                     out,
                     SetForegroundColor(Color::Rgb {
-                        r: 60,
-                        g: 65,
-                        b: 78
+                        r: 80,
+                        g: 85,
+                        b: 100
                     }),
                     Print(format!("  \x1b[2m[{n_lines} lines]\x1b[0m")),
                     ResetColor,
+                )?;
+            }
+
+            // Bottom border (when text is present and no dropdown).
+            if matches.is_empty() {
+                let inner = term_width.saturating_sub(2);
+                queue!(
+                    out,
+                    Print("\r\n"),
+                    MoveToColumn(0),
+                    Print(format!("{border_c}╰{}╯\x1b[0m", "─".repeat(inner))),
+                    Clear(ClearType::UntilNewLine),
                 )?;
             }
         }
@@ -907,13 +932,14 @@ impl LineEditor {
             Some(p) => prefix[p + 1..].chars().count(),
             None => prefix.chars().count(),
         };
-        let prompt_len = visible_len(&self.prompt);
+        let border_prefix_len = 2usize; // "│ "
+        let prompt_len = border_prefix_len + visible_len(&self.prompt);
         let term_width = terminal::size()
             .map(|(w, _)| usize::from(w.max(1)))
             .unwrap_or(80);
 
-        // Continuation marker "  ↳ " adds 4 visible chars to non-first lines.
-        let continuation_prefix_len = 4usize; // "  ↳ "
+        // Continuation: "│ ↳ " = 4 visible chars on non-first lines.
+        let continuation_prefix_len = border_prefix_len + 2; // "│ " + "↳ "
 
         let mut visual_total_rows = 0usize;
         let mut cursor_visual_row = 0usize;
@@ -946,18 +972,25 @@ impl LineEditor {
         };
         let cursor_col = cursor_abs_cols % term_width;
 
-        // The hints line adds one extra row below the text when input is empty.
-        let hints_extra = if hints_row { 1 } else { 0 };
+        // Extra rows below text: hints_row gets hints+bottom_border (2),
+        // non-empty text with no dropdown gets bottom_border (1).
+        let bottom_extra = if hints_row {
+            2 // hints line + bottom border
+        } else if dropdown_count == 0 {
+            1 // bottom border only
+        } else {
+            0 // dropdown replaces bottom border
+        };
 
         let rows_below_cursor =
-            visual_total_rows.saturating_sub(cursor_visual_row + 1) + dropdown_count + hints_extra;
+            visual_total_rows.saturating_sub(cursor_visual_row + 1) + dropdown_count + bottom_extra;
         if rows_below_cursor > 0 {
             queue!(out, MoveUp(rows_below_cursor as u16))?;
         }
         queue!(out, MoveToColumn(cursor_col as u16))?;
 
         // Track state for next render. +1 for the top border line.
-        sess.rendered_rows = dropdown_count + visual_total_rows + hints_extra + 1;
+        sess.rendered_rows = dropdown_count + visual_total_rows + bottom_extra + 1;
         sess.cursor_row_offset = rows_below_cursor;
 
         out.flush()
@@ -980,13 +1013,14 @@ impl LineEditor {
 
     fn finalize(&self, sess: &mut Session, out: &mut impl Write) -> io::Result<()> {
         self.erase(sess, out)?;
-        // Print user message in pi-mono style: dark background, full-width highlight.
+        // User message: full-width dark background with accent marker.
         let text = sess.text.replace('\n', " ↵ ");
         let term_width = crossterm::terminal::size()
             .map(|(w, _)| w as usize)
             .unwrap_or(80);
-        // Pad to terminal width for full-width background effect.
-        let visible_len = text.chars().count() + 1; // +1 for leading space
+        // "▍ text" = 3 prefix chars (marker + space)
+        let prefix = "\x1b[38;2;138;190;183m▍\x1b[38;2;200;210;240m ";
+        let visible_len = text.chars().count() + 3; // marker(1) + space(1) + leading_space(1)
         let padding = if visible_len < term_width {
             " ".repeat(term_width - visible_len)
         } else {
@@ -994,9 +1028,9 @@ impl LineEditor {
         };
         execute!(
             out,
-            // userMessageBg #343541 = rgb(52,53,65), default fg (no explicit color = inherit terminal default)
-            Print("\x1b[48;2;52;53;65m"),
-            Print(format!(" {text}{padding}")),
+            // Dark slate background (#282c38)
+            Print("\x1b[48;2;40;44;56m"),
+            Print(format!(" {prefix}{text}\x1b[0m\x1b[48;2;40;44;56m{padding}")),
             Print("\x1b[0m\r\n"),
         )?;
         out.flush()

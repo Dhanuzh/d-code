@@ -1591,37 +1591,65 @@ pub fn print_section_header(title: &str) {
 
 /// Print a welcome banner with provider status.
 pub fn print_welcome_banner(provider_info: &str, auth_store: &dcode_providers::AuthStore) {
-    // Pi-mono style: logo line + keybinding hints, no box borders.
-    // dim = #666666, muted = #808080, accent = #8abeb7
     const DIM: &str = "\x1b[38;2;102;102;102m";
     const MUTED: &str = "\x1b[38;2;128;128;128m";
     const ACCNT: &str = "\x1b[38;2;138;190;183m";
+    const BORDER: &str = "\x1b[38;2;60;65;80m";
     const RST: &str = "\x1b[0m";
     const BOLD: &str = "\x1b[1m";
 
-    // ── Logo: "d-code v0.1.x" ─────────────────────────────────────────────────
     let version = env!("CARGO_PKG_VERSION");
-    println!();
-    println!(" {ACCNT}{BOLD}d-code{RST} {DIM}v{version}{RST}");
+    let w = terminal::size().map(|(w, _)| w as usize).unwrap_or(80);
+
     println!();
 
-    // ── Keybinding hints (one per line, dim key + muted description) ──────────
-    let hints: &[(&str, &str)] = &[
-        ("^C", "to interrupt / exit (empty)"),
-        ("^G", "for external editor"),
-        ("^P / ^N", "to cycle models"),
-        ("Shift+↵", "for newline"),
-        ("/", "for commands"),
-        ("!", "to run bash"),
+    // ── Logo with gradient accent ─────────────────────────────────────────────
+    // Gradient from teal→cyan across "d-code"
+    let logo_chars = ['d', '-', 'c', 'o', 'd', 'e'];
+    let logo_colors: [(u8, u8, u8); 6] = [
+        (100, 175, 170),
+        (110, 180, 175),
+        (120, 190, 183),
+        (138, 195, 190),
+        (150, 205, 200),
+        (160, 215, 210),
     ];
-    for (key, desc) in hints {
-        println!(" {DIM}{key}{RST} {MUTED}{desc}{RST}");
+    print!("  {BOLD}");
+    for (ch, (r, g, b)) in logo_chars.iter().zip(logo_colors.iter()) {
+        print!("\x1b[38;2;{r};{g};{b}m{ch}");
     }
-
-    // ── Provider status (compact, one line) ───────────────────────────────────
+    println!("{RST} {DIM}v{version}{RST}");
     println!();
-    let dot_on = format!("{ACCNT}●{RST}");
-    let dot_off = format!("{DIM}○{RST}");
+
+    // ── Keybinding hints (compact 2-column grid) ──────────────────────────────
+    let hints: &[(&str, &str)] = &[
+        ("^C", "exit"),
+        ("^G", "editor"),
+        ("^P/N", "models"),
+        ("S-Tab", "thinking"),
+        ("S+↵", "newline"),
+        ("/", "commands"),
+        ("!", "bash"),
+        ("!!", "bash (quiet)"),
+    ];
+    let col_width: usize = 24;
+    let mut i = 0;
+    while i < hints.len() {
+        print!("  ");
+        for j in 0..2 {
+            if i + j < hints.len() {
+                let (key, desc) = hints[i + j];
+                let cell = format!("{key} {desc}");
+                let pad = col_width.saturating_sub(cell.len());
+                print!("{DIM}{key}{RST} {MUTED}{desc}{RST}{}", " ".repeat(pad));
+            }
+        }
+        println!();
+        i += 2;
+    }
+    println!();
+
+    // ── Provider status (pills with colored indicators) ───────────────────────
     let providers: &[(&str, bool)] = &[
         ("anthropic", auth_store.anthropic.is_some()),
         ("copilot", auth_store.copilot.is_some()),
@@ -1638,20 +1666,29 @@ pub fn print_welcome_banner(provider_info: &str, auth_store: &dcode_providers::A
             auth_store.openrouter.is_some() || std::env::var("OPENROUTER_API_KEY").is_ok(),
         ),
     ];
-    print!(" ");
-    for (label, active) in providers {
-        let dot = if *active { &dot_on } else { &dot_off };
-        if *active {
-            print!("{dot} {MUTED}{label}{RST}  ");
+
+    // Active provider (from provider_info "copilot/gpt-4o")
+    let active_provider = provider_info.split('/').next().unwrap_or("");
+
+    print!("  ");
+    for (label, authenticated) in providers {
+        let is_active = *label == active_provider;
+        if is_active {
+            // Active: bright accent with filled dot
+            print!("{ACCNT}{BOLD}● {label}{RST}  ");
+        } else if *authenticated {
+            // Authenticated but not active: muted with filled dot
+            print!("{MUTED}● {label}{RST}  ");
         } else {
-            print!("{dot} {DIM}{label}{RST}  ");
+            // Not authenticated: dim with hollow dot
+            print!("{DIM}○ {label}{RST}  ");
         }
     }
     println!();
-    println!();
 
-    let _ = provider_info; // suppress unused warning
-    let _ = auth_store;
+    // ── Separator ─────────────────────────────────────────────────────────────
+    println!("  {BORDER}{}{RST}", "─".repeat(w.saturating_sub(4)));
+    println!();
 }
 
 /// Print a condensed replay of a session's conversation for context on resume.

@@ -173,27 +173,24 @@ pub async fn run(cwd: PathBuf, provider_name: Option<String>) -> anyhow::Result<
     }
 
     let make_prompt = |info: &str, tokens: Option<u32>, cwd: &std::path::Path| -> String {
-        // Branch in amber (256-colour 179) — dim
+        // Compact prompt: model branch [tokens] ❯
         let branch = git_branch(cwd)
-            .map(|b| format!(" \x1b[38;5;179m\x1b[2m{b}\x1b[0m"))
+            .map(|b| format!(" \x1b[38;2;95;135;175m{b}\x1b[0m"))
             .unwrap_or_default();
-        // Token count in dim gray
-        match tokens {
+        let tok_str = match tokens {
             Some(t) if t > 0 => {
                 let display = if t >= 1_000_000 {
                     format!("{:.1}M", t as f64 / 1_000_000.0)
                 } else if t >= 1_000 {
                     format!("{:.0}k", t as f64 / 1_000.0)
                 } else {
-                    format!("{}", t)
+                    format!("{t}")
                 };
-                // info in accent teal, token count in dim, ▸ in accent
-                format!(" \x1b[38;2;138;190;183m{info}\x1b[0m{branch} \x1b[38;2;102;102;102m[{display}]\x1b[0m \x1b[38;2;138;190;183m▸\x1b[0m ")
+                format!(" \x1b[38;2;80;85;100m{display}\x1b[0m")
             }
-            _ => format!(
-                " \x1b[38;2;138;190;183m{info}\x1b[0m{branch} \x1b[38;2;138;190;183m▸\x1b[0m "
-            ),
-        }
+            _ => String::new(),
+        };
+        format!("\x1b[38;2;138;190;183m{info}\x1b[0m{branch}{tok_str} \x1b[38;2;138;190;183m❯\x1b[0m ")
     };
     let mut editor = LineEditor::new(make_prompt(&provider_info, None, &cwd), slash_completions());
 
