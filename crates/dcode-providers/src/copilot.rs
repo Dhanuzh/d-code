@@ -35,13 +35,30 @@ const EDITOR_PLUGIN_VERSION: &str = "copilot-chat/0.22.4";
 
 pub const DEFAULT_MODEL: &str = "gpt-4o-mini";
 pub const SUPPORTED_MODELS: &[&str] = &[
-    "gpt-4o",
-    "gpt-4.1",
-    "gpt-4o-mini",
-    "gpt-5-mini",
+    // Claude (via Anthropic Messages API on Copilot)
+    "claude-haiku-4.5",
     "claude-sonnet-4",
     "claude-sonnet-4.5",
+    "claude-sonnet-4.6",
+    "claude-opus-4.5",
+    "claude-opus-4.6",
+    // GPT (OpenAI Completions API on Copilot)
+    "gpt-4o",
+    "gpt-4o-mini",
+    "gpt-4.1",
+    "gpt-5",
+    "gpt-5-mini",
+    "gpt-5.1",
+    "gpt-5.2",
+    "gpt-5.4",
+    "gpt-5.4-mini",
+    // Gemini (OpenAI Completions API on Copilot)
     "gemini-2.5-pro",
+    "gemini-3-flash-preview",
+    "gemini-3-pro-preview",
+    "gemini-3.1-pro-preview",
+    // Grok
+    "grok-code-fast-1",
 ];
 pub const CONTEXT_WINDOW: u32 = 128_000;
 

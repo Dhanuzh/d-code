@@ -1,3 +1,4 @@
+pub mod antigravity;
 pub mod anthropic;
 pub mod copilot;
 pub mod gemini;
@@ -50,6 +51,12 @@ pub fn model_catalog() -> &'static [ProviderModelCatalog] {
             default_model: openrouter::DEFAULT_MODEL,
             models: openrouter::SUPPORTED_MODELS,
         },
+        ProviderModelCatalog {
+            provider: "antigravity",
+            aliases: &["ag"],
+            default_model: antigravity::DEFAULT_MODEL,
+            models: antigravity::SUPPORTED_MODELS,
+        },
     ]
 }
 
@@ -60,6 +67,7 @@ fn normalize_provider_name(name: &str) -> Option<&'static str> {
         "openai" | "gpt" => Some("openai"),
         "gemini" | "google" => Some("gemini"),
         "openrouter" | "or" => Some("openrouter"),
+        "antigravity" | "ag" => Some("antigravity"),
         _ => None,
     }
 }
@@ -151,8 +159,11 @@ pub fn load_provider_with_model(
         "openrouter" => Ok(Box::new(
             openrouter::OpenRouterProvider::from_auth_with_model(model)?,
         )),
+        "antigravity" => Ok(Box::new(
+            antigravity::AntigravityProvider::from_auth_with_model(model)?,
+        )),
         _ => anyhow::bail!(
-            "Unknown provider: {provider}. Use: anthropic, copilot, openai, gemini, openrouter"
+            "Unknown provider: {provider}. Use: anthropic, copilot, openai, gemini, openrouter, antigravity"
         ),
     }
 }

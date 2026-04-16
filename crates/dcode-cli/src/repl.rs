@@ -125,28 +125,7 @@ pub async fn run(cwd: PathBuf, provider_name: Option<String>) -> anyhow::Result<
         print!("  \x1b[2mFetching models…\x1b[0m");
         let _ = std::io::stdout().flush();
 
-        let store = dcode_providers::AuthStore::load().unwrap_or_default();
-        let mut labels: Vec<String> = Vec::new();
-        let all_providers = ["anthropic", "copilot", "openai", "gemini", "openrouter"];
-        for p in all_providers {
-            let authenticated = match p {
-                "anthropic" => store.anthropic.is_some(),
-                "copilot" => store.copilot.is_some(),
-                "openai" => store.openai.is_some() || store.openai_oauth.is_some(),
-                "gemini" => store.gemini.is_some() || std::env::var("GEMINI_API_KEY").is_ok(),
-                "openrouter" => {
-                    store.openrouter.is_some() || std::env::var("OPENROUTER_API_KEY").is_ok()
-                }
-                _ => false,
-            };
-            if authenticated {
-                if let Ok(tmp) = load_provider_with_model(Some(p), None) {
-                    for m in tmp.list_models().await {
-                        labels.push(format!("{p}/{m}"));
-                    }
-                }
-            }
-        }
+        let labels = fetch_all_models(&agent, 8).await;
         print!("\r\x1b[2K");
         let _ = std::io::stdout().flush();
 
@@ -688,8 +667,33 @@ pub async fn run(cwd: PathBuf, provider_name: Option<String>) -> anyhow::Result<
                         continue;
                     }
                     commands::CommandResult::Login { provider } => {
-                        let p = provider.as_deref().unwrap_or("anthropic");
-                        match p {
+                        let p = match provider.as_deref() {
+                            Some(s) => s.to_string(),
+                            None => {
+                                // Show interactive picker.
+                                let choices = vec![
+                                    "anthropic".to_string(),
+                                    "copilot".to_string(),
+                                    "openai".to_string(),
+                                    "gemini".to_string(),
+                                    "openrouter".to_string(),
+                                    "antigravity".to_string(),
+                                ];
+                                // Drain any buffered keypresses.
+                                while crossterm::event::poll(std::time::Duration::ZERO)
+                                    .unwrap_or(false)
+                                {
+                                    let _ = crossterm::event::read();
+                                }
+                                match render::select_interactive("Login to:", &choices) {
+                                    Some(idx) => choices[idx].clone(),
+                                    None => {
+                                        continue;
+                                    }
+                                }
+                            }
+                        };
+                        match p.as_str() {
                             "anthropic" | "claude" => {
                                 let _ = login::login_anthropic().await;
                             }
@@ -705,8 +709,11 @@ pub async fn run(cwd: PathBuf, provider_name: Option<String>) -> anyhow::Result<
                             "openrouter" | "or" => {
                                 let _ = login::login_openrouter().await;
                             }
+                            "antigravity" | "ag" => {
+                                let _ = login::login_antigravity().await;
+                            }
                             other => render::print_error(&format!(
-                                "Unknown provider '{other}'. Use: anthropic, copilot, openai, gemini, openrouter"
+                                "Unknown provider '{other}'. Use: anthropic, copilot, openai, gemini, openrouter, antigravity"
                             )),
                         }
                         continue;
@@ -733,40 +740,8 @@ pub async fn run(cwd: PathBuf, provider_name: Option<String>) -> anyhow::Result<
                         print!("  \x1b[2mFetching models…\x1b[0m");
                         let _ = std::io::stdout().flush();
 
-                        let store = dcode_providers::AuthStore::load().unwrap_or_default();
-                        let mut labels: Vec<String> = Vec::new();
-                        for m in agent.provider.list_models().await {
-                            labels.push(format!("{}/{}", agent.provider.name(), m));
-                        }
-                        let other_providers: Vec<&str> =
-                            ["anthropic", "copilot", "openai", "gemini", "openrouter"]
-                                .iter()
-                                .filter(|&&p| p != agent.provider.name())
-                                .filter(|&&p| match p {
-                                    "anthropic" => store.anthropic.is_some(),
-                                    "copilot" => store.copilot.is_some(),
-                                    "openai" => {
-                                        store.openai.is_some() || store.openai_oauth.is_some()
-                                    }
-                                    "gemini" => {
-                                        store.gemini.is_some()
-                                            || std::env::var("GEMINI_API_KEY").is_ok()
-                                    }
-                                    "openrouter" => {
-                                        store.openrouter.is_some()
-                                            || std::env::var("OPENROUTER_API_KEY").is_ok()
-                                    }
-                                    _ => false,
-                                })
-                                .copied()
-                                .collect();
-                        for p in other_providers {
-                            if let Ok(tmp) = load_provider_with_model(Some(p), None) {
-                                for m in tmp.list_models().await {
-                                    labels.push(format!("{p}/{m}"));
-                                }
-                            }
-                        }
+                        let labels = fetch_all_models(&agent, 8).await;
+
                         // Clear the loading line.
                         print!("\r\x1b[2K");
                         let _ = std::io::stdout().flush();
@@ -1094,6 +1069,7 @@ async fn run_turn_with_tui(agent: &mut dcode_agent::Agent, input: &str) {
     // Footer: token counts, cost, context% — mirrors pi-mono footer.ts
     let ctx_used = agent.session.estimated_tokens() as u32;
     render::print_turn_footer(total_in, total_out, total_cache_write, total_cache_read, &model_name, ctx_window, ctx_used);
+    println!();
     println!();
 }
 
@@ -1615,6 +1591,40 @@ fn save_history(editor: &LineEditor, path: &std::path::Path) {
         let _ = std::fs::create_dir_all(parent);
     }
     let _ = std::fs::write(path, editor.history.join("\n"));
+}
+
+/// Return `"provider/model"` labels for all authenticated providers using the
+/// static model catalog. Instant — no network calls, no timeouts, no hangs.
+async fn fetch_all_models(_agent: &Agent, _timeout_secs: u64) -> Vec<String> {
+    use dcode_providers::model_catalog;
+
+    let store = dcode_providers::AuthStore::load().unwrap_or_default();
+    let catalog = model_catalog();
+
+    let auth_flags: &[(&str, bool)] = &[
+        ("anthropic", store.anthropic.is_some()),
+        ("copilot", store.copilot.is_some()),
+        (
+            "openai",
+            store.openai.is_some() || store.openai_oauth.is_some(),
+        ),
+        ("gemini", store.gemini.is_some()),
+        ("openrouter", store.openrouter.is_some()),
+        ("antigravity", store.antigravity.is_some()),
+    ];
+
+    let mut labels = Vec::new();
+    for &(pname, is_auth) in auth_flags {
+        if !is_auth {
+            continue;
+        }
+        if let Some(cat) = catalog.iter().find(|c| c.provider == pname) {
+            for m in cat.models {
+                labels.push(format!("{pname}/{m}"));
+            }
+        }
+    }
+    labels
 }
 
 /// Strip raw JSON from provider API errors and return a clean one-liner.

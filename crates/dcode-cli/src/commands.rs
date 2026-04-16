@@ -119,7 +119,7 @@ Slash commands:
   /init              Scan project and generate DCODE.md context file
   /model             Pick model from menu
   /model [name]      Set provider/model  (e.g. /model gemini/gemini-2.0-flash)
-  /login [provider]  Login to provider (anthropic/copilot/openai/gemini/openrouter)
+  /login [provider]  Login to provider (anthropic/copilot/openai/gemini/openrouter/antigravity)
   /logout [provider] Logout from provider
   /prompts           List available prompt templates
   /skills            List available skills

@@ -165,7 +165,7 @@ impl Agent {
             let mut text_buf = String::new();
             let mut tool_calls: Vec<PendingToolCall> = vec![];
             let mut current_tool: Option<PendingToolCall> = None;
-            let mut stop_reason = StopReason::EndTurn;
+            let mut _stop_reason = StopReason::EndTurn;
 
             while let Some(ev) = stream.next().await {
                 let ev = ev.context("stream event")?;
@@ -214,7 +214,7 @@ impl Agent {
                         });
                     }
                     StreamEvent::Done { stop_reason: r } => {
-                        stop_reason = r;
+                        _stop_reason = r;
                     }
                 }
             }
@@ -238,8 +238,10 @@ impl Agent {
                 });
             }
 
-            // No tool calls → done.
-            if tool_calls.is_empty() || stop_reason == StopReason::EndTurn {
+            // No tool calls → done.  (Don't also check stop_reason here —
+            // Gemini/Antigravity returns "STOP" even with function calls,
+            // and the presence of tool calls is the reliable signal.)
+            if tool_calls.is_empty() {
                 break;
             }
 

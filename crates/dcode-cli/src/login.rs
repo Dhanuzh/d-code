@@ -2,7 +2,7 @@
 use std::io::{self, BufRead, Write};
 use std::sync::Arc;
 
-use dcode_providers::{anthropic, copilot, gemini, openai, openrouter, AuthStore};
+use dcode_providers::{antigravity, anthropic, copilot, gemini, openai, openrouter, AuthStore};
 
 use crate::render;
 
@@ -237,6 +237,66 @@ pub async fn login_openrouter() -> anyhow::Result<()> {
     Ok(())
 }
 
+// ── Antigravity ───────────────────────────────────────────────────────────────
+
+pub async fn login_antigravity() -> anyhow::Result<()> {
+    if let Ok(store) = AuthStore::load() {
+        if store.antigravity.is_some() {
+            render::print_info(
+                "Already logged in to Antigravity. Use /logout antigravity first to re-login.",
+            );
+            return Ok(());
+        }
+    }
+
+    let pkce = dcode_providers::oauth::generate_pkce();
+    let auth_url = antigravity::build_auth_url(&pkce.challenge, &pkce.verifier).map_err(|e| {
+        anyhow::anyhow!(
+            "{e}\nSet DCODE_ANTIGRAVITY_CLIENT_ID and DCODE_ANTIGRAVITY_CLIENT_SECRET before running login."
+        )
+    })?;
+
+    println!();
+    render::print_section_header("Antigravity login (Gemini 3, Claude, GPT-OSS)");
+    println!("  Opening your browser to authorize d-code…");
+    println!();
+
+    let opened = open_browser(&auth_url);
+    if opened {
+        println!("  Browser opened. Complete the sign-in in your browser.");
+    } else {
+        println!("  Open this URL in your browser:");
+        println!();
+        println!("  {auth_url}");
+    }
+    println!();
+    println!("  Waiting for OAuth callback on localhost:51121…  (Ctrl-C to cancel)");
+    println!();
+
+    // Wait for the callback server to receive the auth code.
+    let (code, state) = antigravity::wait_for_callback().await?;
+
+    // Verify PKCE state
+    if state != pkce.verifier {
+        anyhow::bail!("OAuth state mismatch — possible CSRF attack. Try again.");
+    }
+
+    render::print_info("Exchanging code for token…");
+    let creds = antigravity::exchange_code(&code, &pkce.verifier).await?;
+
+    let email_msg = creds
+        .email
+        .as_deref()
+        .map(|e| format!(" ({e})"))
+        .unwrap_or_default();
+
+    antigravity::save_credentials(&creds)?;
+    render::print_success(&format!(
+        "Logged in to Antigravity{email_msg}  ✓  (Gemini 3, Claude, GPT-OSS now available)"
+    ));
+    Ok(())
+}
+
 // ── Status ─────────────────────────────────────────────────────────────────────
 
 pub fn show_status() {
@@ -278,12 +338,18 @@ pub fn print_auth_table(store: &AuthStore) {
     } else {
         "\x1b[2m✗ not logged in\x1b[0m  run: d-code login openrouter"
     };
+    let antigravity_status = if store.antigravity.is_some() {
+        "\x1b[32m✓ logged in\x1b[0m   — gemini-3, claude, gpt-oss (free)"
+    } else {
+        "\x1b[2m✗ not logged in\x1b[0m  run: d-code login antigravity"
+    };
 
     println!("  │ anthropic    │ {}│", pad_to(anthropic_status, 42));
     println!("  │ copilot      │ {}│", pad_to(copilot_status, 42));
     println!("  │ openai       │ {}│", pad_to(openai_status, 42));
     println!("  │ gemini       │ {}│", pad_to(gemini_status, 42));
     println!("  │ openrouter   │ {}│", pad_to(openrouter_status, 42));
+    println!("  │ antigravity  │ {}│", pad_to(antigravity_status, 42));
     println!("  └──────────────┴────────────────────────────────────────────┘");
     println!();
 }
@@ -312,6 +378,10 @@ pub fn logout(provider: &str) -> anyhow::Result<()> {
             store.openrouter = None;
             render::print_success("Logged out from OpenRouter.");
         }
+        "antigravity" | "ag" => {
+            store.antigravity = None;
+            render::print_success("Logged out from Antigravity.");
+        }
         "all" => {
             store.anthropic = None;
             store.copilot = None;
@@ -319,10 +389,11 @@ pub fn logout(provider: &str) -> anyhow::Result<()> {
             store.openai_oauth = None;
             store.gemini = None;
             store.openrouter = None;
+            store.antigravity = None;
             render::print_success("Logged out from all providers.");
         }
         other => anyhow::bail!(
-            "Unknown provider: {other}. Use: anthropic, copilot, openai, gemini, openrouter, all"
+            "Unknown provider: {other}. Use: anthropic, copilot, openai, gemini, openrouter, antigravity, all"
         ),
     }
     store.save()?;

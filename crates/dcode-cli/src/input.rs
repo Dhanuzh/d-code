@@ -247,6 +247,10 @@ pub struct LineEditor {
     border_color: (u8, u8, u8),
     /// Optional label shown inside the top border (e.g. "thinking: low").
     border_label: String,
+    /// Stored large pastes: id → content. Markers like `[paste #1 +42 lines]` are
+    /// inserted inline; on submit, markers are expanded back to real content.
+    pastes: std::collections::HashMap<u32, String>,
+    paste_counter: u32,
 }
 
 impl LineEditor {
@@ -257,6 +261,8 @@ impl LineEditor {
             completions,
             border_color: (55, 60, 72),
             border_label: String::new(),
+            pastes: std::collections::HashMap::new(),
+            paste_counter: 0,
         }
     }
 
@@ -277,6 +283,36 @@ impl LineEditor {
         };
         self.border_color = color;
         self.border_label = label;
+    }
+
+    /// Expand paste/image markers back to full content.
+    /// `[paste #N ...]` → stored text, `[image #N ...]` → file path.
+    fn expand_pastes(&self, text: &str) -> String {
+        let mut result = text.to_string();
+        for (&id, content) in &self.pastes {
+            // Try [paste #N ...] marker first.
+            let paste_pat = format!("[paste #{id} ");
+            if let Some(start) = result.find(&paste_pat) {
+                if let Some(end) = result[start..].find(']') {
+                    result.replace_range(start..start + end + 1, content);
+                    continue;
+                }
+            }
+            // Try [image #N ...] marker.
+            let image_pat = format!("[image #{id} ");
+            if let Some(start) = result.find(&image_pat) {
+                if let Some(end) = result[start..].find(']') {
+                    result.replace_range(start..start + end + 1, content);
+                }
+            }
+        }
+        result
+    }
+
+    /// Clear paste storage (call after submit).
+    fn clear_pastes(&mut self) {
+        self.pastes.clear();
+        self.paste_counter = 0;
     }
 
     pub fn push_history(&mut self, entry: impl Into<String>) {
@@ -308,8 +344,51 @@ impl LineEditor {
 
             // ── Bracketed paste — insert whole block at once ──────────────────
             if let Event::Paste(text) = ev {
-                for ch in text.chars() {
-                    sess.insert(ch);
+                // Normalize line endings, expand tabs.
+                let clean: String = text
+                    .replace("\r\n", "\n")
+                    .replace('\r', "\n")
+                    .replace('\t', "    ");
+
+                // Check if pasted text is a path to an image file.
+                let trimmed = clean.trim().trim_matches('\'').trim_matches('"');
+                if is_image_path(trimmed) {
+                    self.paste_counter += 1;
+                    let id = self.paste_counter;
+                    let filename = std::path::Path::new(trimmed)
+                        .file_name()
+                        .map(|f| f.to_string_lossy().to_string())
+                        .unwrap_or_else(|| trimmed.to_string());
+                    // Store the full path; on submit, marker → path.
+                    self.pastes.insert(id, trimmed.to_string());
+                    let marker = format!("[image #{id} {filename}]");
+                    for ch in marker.chars() {
+                        sess.insert(ch);
+                    }
+                } else {
+                    let line_count = clean.matches('\n').count() + 1;
+                    let char_count = clean.len();
+
+                    if line_count > 10 || char_count > 1000 {
+                        // Large paste → store and insert compact marker.
+                        self.paste_counter += 1;
+                        let id = self.paste_counter;
+                        self.pastes.insert(id, clean);
+                        let marker = if line_count > 10 {
+                            format!("[paste #{id} +{line_count} lines]")
+                        } else {
+                            format!("[paste #{id} {char_count} chars]")
+                        };
+                        for ch in marker.chars() {
+                            sess.insert(ch);
+                        }
+                    } else {
+                        // Small paste → insert inline (strip newlines for single-line feel).
+                        let inline = clean.replace('\n', " ");
+                        for ch in inline.chars() {
+                            sess.insert(ch);
+                        }
+                    }
                 }
                 hist_idx = None;
                 sess.comp_sel = None;
@@ -334,6 +413,7 @@ impl LineEditor {
                     ..
                 } if modifiers.contains(KeyModifiers::CONTROL) => {
                     self.erase(&mut sess, &mut out)?;
+                    self.clear_pastes();
                     execute!(out, Print("\r\n"))?;
                     return Ok(if sess.text.is_empty() {
                         ReadOutcome::Exit
@@ -347,8 +427,32 @@ impl LineEditor {
                     ..
                 } if modifiers.contains(KeyModifiers::CONTROL) => {
                     self.erase(&mut sess, &mut out)?;
+                    self.clear_pastes();
                     execute!(out, Print("\r\n"))?;
                     return Ok(ReadOutcome::Exit);
+                }
+                // ── Ctrl-V (clipboard image paste) ──────────────────────
+                KeyEvent {
+                    code: KeyCode::Char('v'),
+                    modifiers,
+                    ..
+                } if modifiers.contains(KeyModifiers::CONTROL) => {
+                    if let Some(path) = read_clipboard_image() {
+                        self.paste_counter += 1;
+                        let id = self.paste_counter;
+                        let filename = std::path::Path::new(&path)
+                            .file_name()
+                            .map(|f| f.to_string_lossy().to_string())
+                            .unwrap_or_else(|| "image".into());
+                        self.pastes.insert(id, path);
+                        let marker = format!("[image #{id} {filename}]");
+                        for ch in marker.chars() {
+                            sess.insert(ch);
+                        }
+                        self.render(&mut sess, &mut out)?;
+                    }
+                    // If no image on clipboard, ignore (terminal paste via
+                    // bracketed paste mode handles text Ctrl+V automatically).
                 }
                 // ── Ctrl-U (kill to line start) ───────────────────────────
                 KeyEvent {
@@ -462,9 +566,10 @@ impl LineEditor {
                         self.finalize(&mut sess, &mut out)?;
                         return Ok(ReadOutcome::Submit(sess.text.clone()));
                     }
-                    let text = sess.text.clone();
-                    sess.cursor = text.len();
+                    let text = self.expand_pastes(&sess.text);
+                    sess.cursor = sess.text.len();
                     self.finalize(&mut sess, &mut out)?;
+                    self.clear_pastes();
                     return Ok(ReadOutcome::Submit(text));
                 }
                 // ── Shift-Enter (newline) ─────────────────────────────────
@@ -1013,26 +1118,34 @@ impl LineEditor {
 
     fn finalize(&self, sess: &mut Session, out: &mut impl Write) -> io::Result<()> {
         self.erase(sess, out)?;
-        // User message: full-width dark background with accent marker.
-        let text = sess.text.replace('\n', " ↵ ");
+
         let term_width = crossterm::terminal::size()
             .map(|(w, _)| w as usize)
             .unwrap_or(80);
-        // "▍ text" = 3 prefix chars (marker + space)
-        let prefix = "\x1b[38;2;138;190;183m▍\x1b[38;2;200;210;240m ";
-        let visible_len = text.chars().count() + 3; // marker(1) + space(1) + leading_space(1)
-        let padding = if visible_len < term_width {
-            " ".repeat(term_width - visible_len)
-        } else {
-            String::new()
-        };
-        execute!(
-            out,
-            // Dark slate background (#282c38)
-            Print("\x1b[48;2;40;44;56m"),
-            Print(format!(" {prefix}{text}\x1b[0m\x1b[48;2;40;44;56m{padding}")),
-            Print("\x1b[0m\r\n"),
-        )?;
+
+        // Pi-mono style: padded background box (~90% width).
+        let box_width = (term_width * 9 / 10).max(20).min(term_width);
+        let bg = "\x1b[48;2;40;44;56m";
+        let fg = "\x1b[38;2;200;210;240m";
+        let rst = "\x1b[0m";
+        let blank_row = " ".repeat(box_width);
+
+        // Spacer above
+        execute!(out, Print("\r\n"))?;
+        // Top padding row
+        execute!(out, Print(format!("{bg}{blank_row}{rst}\r\n")))?;
+        // Text rows
+        for text_line in sess.text.lines() {
+            let text_len = text_line.chars().count();
+            let right_fill = box_width.saturating_sub(text_len + 3);
+            let fill = " ".repeat(right_fill);
+            execute!(out, Print(format!("{bg}{fg}   {text_line}{fill}{rst}\r\n")))?;
+        }
+        // Bottom padding row
+        execute!(out, Print(format!("{bg}{blank_row}{rst}\r\n")))?;
+        // Spacer below
+        execute!(out, Print("\r\n"))?;
+
         out.flush()
     }
 }
@@ -1119,4 +1232,93 @@ fn visible_len(s: &str) -> usize {
         }
     }
     len
+}
+
+/// Check if a path string points to a recognized image file.
+fn is_image_path(s: &str) -> bool {
+    let lower = s.to_lowercase();
+    let has_ext = lower.ends_with(".png")
+        || lower.ends_with(".jpg")
+        || lower.ends_with(".jpeg")
+        || lower.ends_with(".gif")
+        || lower.ends_with(".webp")
+        || lower.ends_with(".bmp")
+        || lower.ends_with(".svg");
+    has_ext && std::path::Path::new(s).exists()
+}
+
+/// Try to read an image from the system clipboard.
+/// On WSL, uses PowerShell to access the Windows clipboard.
+/// On X11, uses xclip. On Wayland, uses wl-paste.
+/// Returns the temp file path if an image was found.
+fn read_clipboard_image() -> Option<String> {
+    let tmp_dir = std::env::temp_dir();
+    let id = std::process::id();
+    let ts = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis();
+    let tmp_path = tmp_dir.join(format!("d-code-clip-{id}-{ts}.png"));
+    let tmp_str = tmp_path.to_string_lossy().to_string();
+
+    // WSL: use PowerShell to read the Windows clipboard.
+    if is_wsl() {
+        let win_path = std::process::Command::new("wslpath")
+            .args(["-w", &tmp_str])
+            .output()
+            .ok()?;
+        if !win_path.status.success() {
+            return None;
+        }
+        let win_path_str = String::from_utf8_lossy(&win_path.stdout).trim().to_string();
+        let ps_script = format!(
+            "Add-Type -AssemblyName System.Windows.Forms; \
+             Add-Type -AssemblyName System.Drawing; \
+             $img = [System.Windows.Forms.Clipboard]::GetImage(); \
+             if ($img) {{ $img.Save('{}', [System.Drawing.Imaging.ImageFormat]::Png); Write-Output 'ok' }} \
+             else {{ Write-Output 'empty' }}",
+            win_path_str.replace('\'', "''")
+        );
+        let result = std::process::Command::new("powershell.exe")
+            .args(["-NoProfile", "-Command", &ps_script])
+            .output()
+            .ok()?;
+        let output = String::from_utf8_lossy(&result.stdout).trim().to_string();
+        if output == "ok" && tmp_path.exists() {
+            return Some(tmp_str);
+        }
+        return None;
+    }
+
+    // Wayland: wl-paste.
+    if std::env::var("WAYLAND_DISPLAY").is_ok() {
+        let result = std::process::Command::new("wl-paste")
+            .args(["--type", "image/png", "--no-newline"])
+            .output()
+            .ok()?;
+        if result.status.success() && !result.stdout.is_empty() {
+            std::fs::write(&tmp_path, &result.stdout).ok()?;
+            return Some(tmp_str);
+        }
+        return None;
+    }
+
+    // X11: xclip.
+    let result = std::process::Command::new("xclip")
+        .args(["-selection", "clipboard", "-t", "image/png", "-o"])
+        .output()
+        .ok()?;
+    if result.status.success() && !result.stdout.is_empty() {
+        std::fs::write(&tmp_path, &result.stdout).ok()?;
+        return Some(tmp_str);
+    }
+    None
+}
+
+fn is_wsl() -> bool {
+    std::env::var("WSL_DISTRO_NAME").is_ok()
+        || std::env::var("WSLENV").is_ok()
+        || std::fs::read_to_string("/proc/version")
+            .map(|v| v.to_lowercase().contains("microsoft"))
+            .unwrap_or(false)
 }

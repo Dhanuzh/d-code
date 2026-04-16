@@ -1665,6 +1665,7 @@ pub fn print_welcome_banner(provider_info: &str, auth_store: &dcode_providers::A
             "openrouter",
             auth_store.openrouter.is_some() || std::env::var("OPENROUTER_API_KEY").is_ok(),
         ),
+        ("antigravity", auth_store.antigravity.is_some()),
     ];
 
     // Active provider (from provider_info "copilot/gpt-4o")

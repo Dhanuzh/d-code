@@ -193,6 +193,9 @@ pub struct AuthStore {
     /// OpenRouter API key (access to 100+ models).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub openrouter: Option<ProviderAuth>,
+    /// Antigravity (Google Cloud Code Assist — Gemini 3, Claude, GPT-OSS).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub antigravity: Option<AntigravityAuth>,
 }
 
 /// Stored after a successful OpenAI device-code OAuth login.
@@ -223,6 +226,17 @@ pub struct CopilotAuth {
     pub copilot_token: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub copilot_expires_at: Option<i64>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AntigravityAuth {
+    pub access_token: String,
+    pub refresh_token: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub expires_at: Option<i64>,
+    pub project_id: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub email: Option<String>,
 }
 
 impl AuthStore {
